@@ -4,6 +4,7 @@ import java.net.UnknownHostException;
 import java.util.*;
 
 import com.mongodb.*;
+import org.bson.types.ObjectId;
 
 /**
  * Created by weihan.kong on 10/7/2014.
@@ -49,26 +50,33 @@ public class CohortClustering {
 
         /*
         System.out.println("#blah - check");
-        for (String groupId : countBlahInEachGroupCheck.keySet()) {
-            System.out.println(groupId + " : " + countBlahInEachGroupCheck.get(groupId) + "\t" + groupNames.get(groupId));
+        for (String groupId : countBlahInGroupCheck.keySet()) {
+            System.out.println(groupId + " : " + countBlahInGroupCheck.get(groupId) + "\t" + groupNames.get(groupId));
         }
         */
 
 
         // for each group, do k-means
         for (String groupId : groupNames.keySet()) {
-            // convert interestBlahInUserInGroup into vectors, using indexBlahInGroup
+            // convert interestBlahInUserInGroup into vectors, using blahIdIndexMapInGroup
             double[][] data = getInterestVectors(groupId);
 
             // k-means to cluster users
             System.out.println("Clustering for : " + groupNames.get(groupId));
-            int[] cluster = KMeansClustering.run(data, numCohort);
-            if (cluster == null) {
+            int[] kmeansResult = KMeansClustering.run(data, numCohortKMeans);
+            if (kmeansResult == null) {
                 System.out.println("Error : k-means return null");
                 return;
             }
+            // turn k-means result into cluster form
+            ArrayList<Integer>[] cluster = new ArrayList[kmeansResult.length];
+            for (int u = 0; u < kmeansResult.length; u++) {
+                cluster[u] = new ArrayList<Integer>();
+                cluster[u].add(kmeansResult[u]);
+            }
+
             // put result into cohort hashmap
-            produceCohortHashMap(groupId, cluster);
+            produceCohortHashMap(groupId, cluster, numCohortKMeans);
         }
 
 
@@ -89,7 +97,7 @@ public class CohortClustering {
     double wP = 10.0;
 
     // assumed number of cohort for K-means clustering
-    int numCohort = 2;
+    int numCohortKMeans = 2;
 
     HashMap<String, String> groupNames = new HashMap<String, String>();
 
@@ -97,28 +105,35 @@ public class CohortClustering {
     HashMap<String, HashMap<String, HashMap<String, Double>>>
             interestBlahInUserInGroup = new HashMap<String, HashMap<String, HashMap<String, Double>>>();
 
-    // indexBlahInGroup : groupId -> (blahId -> vectorIndex)
+    // blahIdIndexMapInGroup : groupId -> (blahId -> vectorIndex)
     HashMap<String, HashMap<String, Integer>>
-            indexBlahInGroup = new HashMap<String, HashMap<String, Integer>>();
+            blahIdIndexMapInGroup = new HashMap<String, HashMap<String, Integer>>();
     // countBlahInGroup : groupId -> number of blahs in the group
     HashMap<String, Integer>
             countBlahInGroup = new HashMap<String, Integer>();
 
+    /* check for consistency of blah information between blahdb.blahs and userdb.userBlahInfo
     HashMap<String, HashMap<String, Integer>>
-            indexBlahInEachGroupCheck = new HashMap<String, HashMap<String, Integer>>();
+            blahIdIndexMapInGroupCheck = new HashMap<String, HashMap<String, Integer>>();
     HashMap<String, Integer>
-            countBlahInEachGroupCheck = new HashMap<String, Integer>();
+            countBlahInGroupCheck = new HashMap<String, Integer>();
+    */
 
-    // indexUserInGroup : groupId -> (userId -> vectorIndex)
+    // userIdIndexMapInGroup : groupId -> (userId -> vectorIndex)
     HashMap<String, HashMap<String, Integer>>
-            indexUserInGroup = new HashMap<String, HashMap<String, Integer>>();
+            userIdIndexMapInGroup = new HashMap<String, HashMap<String, Integer>>();
     // countUserInGroup : groupId -> number of users in the group
     HashMap<String, Integer>
             countUserInGroup = new HashMap<String, Integer>();
 
     // cohort clustering result
-    // groupId -> (userId -> cohortId)
-    HashMap<String, HashMap<String, Integer>> cohort = new HashMap<String, HashMap<String, Integer>>();
+    // groupId -> (userId -> cohortId[])
+    HashMap<String, HashMap<String, List<String>>> cohortPerUserInGroup = new HashMap<String, HashMap<String, List<String>>>();
+    // groupId -> (cohortId -> userId[])
+    HashMap<String, HashMap<String, List<String>>> userPerCohortInGroup = new HashMap<String, HashMap<String, List<String>>>();
+
+    // list of cohortId for each group
+    HashMap<String, List<String>> cohortListInGroup = new HashMap<String, List<String>>();
 
     private void initDatabase() throws UnknownHostException {
         mongoClient = new MongoClient(mongoServer, mongoServerPort);
@@ -145,17 +160,17 @@ public class CohortClustering {
             String blahId = obj.getObjectId("_id").toString();
 
             // count blah in each group
-            // indexBlah : blahId -> vectorIndex
-            HashMap<String, Integer> indexBlah = indexBlahInGroup.get(groupId);
-            if (indexBlah == null) {
-                indexBlahInGroup.put(groupId, new HashMap<String, Integer>());
-                indexBlah = indexBlahInGroup.get(groupId);
+            // blahIdIndexMap : blahId -> vectorIndex
+            HashMap<String, Integer> blahIdIndexMap = blahIdIndexMapInGroup.get(groupId);
+            if (blahIdIndexMap == null) {
+                blahIdIndexMapInGroup.put(groupId, new HashMap<String, Integer>());
+                blahIdIndexMap = blahIdIndexMapInGroup.get(groupId);
                 countBlahInGroup.put(groupId, 0);
             }
             // generate index for each blah
-            if (indexBlah.get(blahId) == null) {
+            if (blahIdIndexMap.get(blahId) == null) {
                 int count = countBlahInGroup.get(groupId);
-                indexBlah.put(blahId, count);
+                blahIdIndexMap.put(blahId, count);
                 count++;
                 countBlahInGroup.put(groupId, count);
             }
@@ -176,18 +191,18 @@ public class CohortClustering {
             String userId = (String) obj.get("U");
 
             // count user in each group
-            // indexUser: userId -> index
-            HashMap<String, Integer> indexUser = indexUserInGroup.get(groupId);
-            if (indexUser == null) {
-                indexUserInGroup.put(groupId, new HashMap<String, Integer>());
-                indexUser = indexUserInGroup.get(groupId);
+            // userIdIndexMap: userId -> index
+            HashMap<String, Integer> userIdIndexMap = userIdIndexMapInGroup.get(groupId);
+            if (userIdIndexMap == null) {
+                userIdIndexMapInGroup.put(groupId, new HashMap<String, Integer>());
+                userIdIndexMap = userIdIndexMapInGroup.get(groupId);
                 countUserInGroup.put(groupId, 0);
             }
 
             // generate index for each user
-            if (indexUser.get(userId) == null) {
+            if (userIdIndexMap.get(userId) == null) {
                 int count = countUserInGroup.get(groupId);
-                indexUser.put(userId, count);
+                userIdIndexMap.put(userId, count);
                 count++;
                 countUserInGroup.put(groupId, count);
             }
@@ -231,20 +246,22 @@ public class CohortClustering {
             interestBlah.put(blahId, computeInterest(obj));
 
             // count blah in each user, check
-            // indexBlah : blahId -> vectorIndex
-            HashMap<String, Integer> indexBlah = indexBlahInEachGroupCheck.get(groupId);
-            if (indexBlah == null) {
-                indexBlahInEachGroupCheck.put(groupId, new HashMap<String, Integer>());
-                indexBlah = indexBlahInEachGroupCheck.get(groupId);
-                countBlahInEachGroupCheck.put(groupId, 0);
+            /*
+            // blahIdIndexMap : blahId -> vectorIndex
+            HashMap<String, Integer> blahIdIndexMap = blahIdIndexMapInGroupCheck.get(groupId);
+            if (blahIdIndexMap == null) {
+                blahIdIndexMapInGroupCheck.put(groupId, new HashMap<String, Integer>());
+                blahIdIndexMap = blahIdIndexMapInGroupCheck.get(groupId);
+                countBlahInGroupCheck.put(groupId, 0);
             }
             // generate index for each blah
-            if (indexBlah.get(blahId) == null) {
-                int count = countBlahInEachGroupCheck.get(groupId);
-                indexBlah.put(blahId, count);
+            if (blahIdIndexMap.get(blahId) == null) {
+                int count = countBlahInGroupCheck.get(groupId);
+                blahIdIndexMap.put(blahId, count);
                 count++;
-                countBlahInEachGroupCheck.put(groupId, count);
+                countBlahInGroupCheck.put(groupId, count);
             }
+            */
         }
         cursor.close();
     }
@@ -275,13 +292,13 @@ public class CohortClustering {
         HashMap<String, HashMap<String, Double>> interestBlahInUser = interestBlahInUserInGroup.get(groupId);
 
         // indexBlah : blahId -> index of the blah
-        HashMap<String, Integer> indexBlah = indexBlahInGroup.get(groupId);
+        HashMap<String, Integer> indexBlah = blahIdIndexMapInGroup.get(groupId);
 
         // indexUser : userId -> index of the user
-        HashMap<String, Integer> indexUser = indexUserInGroup.get(groupId);
+        HashMap<String, Integer> indexUser = userIdIndexMapInGroup.get(groupId);
 
         // for each user
-        for (String userId : indexUserInGroup.get(groupId).keySet()) {
+        for (String userId : userIdIndexMapInGroup.get(groupId).keySet()) {
             // put user-blah interest into vectors
             // interestBlah : (blahId -> interest)
             HashMap<String, Double> interestBlah = interestBlahInUser.get(userId);
@@ -296,30 +313,85 @@ public class CohortClustering {
         return data;
     }
 
-    private void produceCohortHashMap(String groupId, int[] cluster) {
-        // userId -> cohort
-        HashMap<String, Integer> indexUser = indexUserInGroup.get(groupId);
-        HashMap<String, Integer> userCohort = new HashMap<String, Integer>();
-        for (String userId : indexUser.keySet()) {
-            userCohort.put(userId, cluster[indexUser.get(userId)]);
+    // cluster input : userIndex -> list of clusterIndex
+    private void produceCohortHashMap(String groupId, ArrayList<Integer>[] cluster, int numOfCohort) {
+        // generate cohortIndex->cohortId map
+        String[] cohortIndexIdMap = new String[numOfCohort];
+        List<String> cohortList = new ArrayList<String>();
+        for (int c = 0; c < numOfCohort; c++) {
+            cohortIndexIdMap[c] = new ObjectId().toString();
+            cohortList.add(cohortIndexIdMap[c]);
         }
-        cohort.put(groupId, userCohort);
+        cohortListInGroup.put(groupId, cohortList);
+
+        // userId -> list of cohortId
+        /*
+        HashMap<String, Integer> userIdIndexMap = userIdIndexMapInGroup.get(groupId);
+        HashMap<String, List<String>> cohortPerUser = new HashMap<String, List<String>>();
+        for (String userId : userIdIndexMap.keySet()) {
+            ArrayList<String> cohorts = new ArrayList<String>();
+            int userIndex = userIdIndexMap.get(userId);
+            for (int i = 0; i < cluster[userIndex].size(); i++) {
+                int cohortIndex = cluster[userIndex].get(i);
+                String cohortId = cohortIndexIdMap[cohortIndex];
+                cohorts.add(cohortId);
+            }
+            cohortPerUser.put(userId, cohorts);
+        }
+        cohortPerUserInGroup.put(groupId, cohortPerUser);
+        */
+
+        // cohortId -> list of userId
+        HashMap<String, Integer> userIdIndexMap = userIdIndexMapInGroup.get(groupId);
+        HashMap<String, List<String>> userPerCohort = new HashMap<String, List<String>>();
+        for (int c = 0; c < numOfCohort; c++) {
+            userPerCohort.put(cohortIndexIdMap[c], new ArrayList<String>());
+        }
+        // add userId
+        for (String userId : userIdIndexMap.keySet()) {
+            int userIndex = userIdIndexMap.get(userId);
+            for (int i = 0; i < cluster[userIndex].size(); i++) {
+                int cohortIndex = cluster[userIndex].get(i);
+                String cohortId = cohortIndexIdMap[cohortIndex];
+                userPerCohort.get(cohortId).add(userId);
+            }
+        }
+        userPerCohortInGroup.put(groupId, userPerCohort);
     }
 
     private void outputCohortToMongo() {
-        DBCollection cohortColl = userDB.getCollection("cohort");
-        BulkWriteOperation builder = cohortColl.initializeUnorderedBulkOperation();
+        System.out.print("Writing cohort information to database...");
 
-        for (String groupId : cohort.keySet()) {
-            HashMap<String, Integer> userCohort = cohort.get(groupId);
-            for (String userId : userCohort.keySet()) {
-                builder.find(new BasicDBObject("U", userId).append("G", groupId)).upsert().replaceOne(
-                        new BasicDBObject("U", userId).append("G", groupId).append("CH", userCohort.get(userId))
+        // insert userdb.cohorts
+        //  _id: ObjectId   cohortId
+        //  U:   String[]   userId[]
+        DBCollection cohortColl = userDB.getCollection("cohorts");
+        BulkWriteOperation cohortBuilder = cohortColl.initializeUnorderedBulkOperation();
+
+        for (String groupId : userPerCohortInGroup.keySet()) {
+            HashMap<String, List<String>> userPerCohort = userPerCohortInGroup.get(groupId);
+            for (String cohortId : userPerCohort.keySet()) {
+                List<String> userIdList = new ArrayList<String>();
+                for (String userId : userPerCohort.get(cohortId)) {
+                    userIdList.add(userId);
+                }
+                cohortBuilder.insert(
+                        new BasicDBObject("_id", new ObjectId(cohortId)).append("N", userIdList.size()).append("G", groupNames.get(groupId)).append("U", userIdList)
                 );
             }
         }
-        System.out.print("Writing cohort information to database...");
-        builder.execute();
+        cohortBuilder.execute();
+
+        // insert cohort generation info into userdb.groups
+        DBCollection groupsColl = userDB.getCollection("groups");
+
+        for (String groupId : groupNames.keySet()) {
+            BasicDBObject groupEntry = new BasicDBObject("_id", new ObjectId(groupId));
+            List<String> cohortList = cohortListInGroup.get(groupId);
+            BasicDBObject generationObj = new BasicDBObject("_id", new ObjectId()).append("c", new Date()).append("CH", cohortList);
+            groupsColl.update(groupEntry, new BasicDBObject("$push", new BasicDBObject("CHG", generationObj)));
+        }
+
         System.out.println("done");
     }
 
