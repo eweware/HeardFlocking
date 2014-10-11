@@ -37,7 +37,7 @@ public class KMeansClustering {
 
             // stop
             if (Arrays.equals(oldCluster, cluster)) {
-                System.out.println("k-means : clustering converge");
+                System.out.println("k-means : clustering converged");
                 break;
             }
 

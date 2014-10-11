@@ -47,7 +47,7 @@ public class CohortClustering {
 
     // cohort clustering result
     HashMap<String, List<String>> userPerCohort = new HashMap<String, List<String>>(); // cohortId -> List of userId
-    List<String> cohortList = new ArrayList<String>(); // list of cohortId for this group
+    List<String> cohortIdList = new ArrayList<String>(); // list of cohortId for this group
 
     public void run() throws UnknownHostException {
         // open MongoDB connection
@@ -55,8 +55,7 @@ public class CohortClustering {
 
         // get group name
         getGroupName();
-        System.out.println("Start cohort clustering for");
-        System.out.println("\t" + groupName + " : " + groupId);
+        System.out.println("Start cohort clustering for '" + groupName + "' id : " + groupId);
 
         // count number of blahs in this group
         // assign a vector index for each blah
@@ -94,6 +93,10 @@ public class CohortClustering {
 
         // write cohort info into mongo
         outputCohortToMongo();
+
+        //writeFakeBlahCohortStrength();
+
+        System.out.println();
     }
 
     private void initDatabase() throws UnknownHostException {
@@ -216,7 +219,7 @@ public class CohortClustering {
         String[] cohortIndexIdMap = new String[numOfCohort];
         for (int c = 0; c < numOfCohort; c++) {
             cohortIndexIdMap[c] = new ObjectId().toString();
-            cohortList.add(cohortIndexIdMap[c]);
+            cohortIdList.add(cohortIndexIdMap[c]);
         }
 
         // cohortId -> list of userId
@@ -255,9 +258,40 @@ public class CohortClustering {
         DBCollection groupsColl = userDB.getCollection("groups");
 
         BasicDBObject groupEntry = new BasicDBObject("_id", new ObjectId(groupId));
-        BasicDBObject generationObj = new BasicDBObject("_id", new ObjectId()).append("c", new Date()).append("CH", cohortList);
-        groupsColl.update(groupEntry, new BasicDBObject("$push", new BasicDBObject("CHG", generationObj)));
+        String generationId = new ObjectId().toString();
+        BasicDBObject cohortInfoDoc = new BasicDBObject();
+        for (String cohortId : cohortIdList) {
+            BasicDBObject defaultInboxNumberDoc = new BasicDBObject("F", -1).append("L", -1).append("FS", -1).append("LS", -1);
+            cohortInfoDoc.append(cohortId, defaultInboxNumberDoc);
+        }
+        BasicDBObject generationObj = new BasicDBObject("c", new Date()).append("CHI", cohortInfoDoc);
+        groupsColl.update(groupEntry, new BasicDBObject("$set", new BasicDBObject("CHG."+generationId, generationObj)));
 
+        System.out.println("done");
+
+        System.out.println("cohort generation id : " + generationId);
+        for (String cohortId : cohortIdList) {
+            System.out.println("\tcohort id : " + cohortId);
+        }
+    }
+
+    private void writeFakeBlahCohortStrength() {
+        System.out.print("Writing fake cohort-strength to blahs...");
+        DBCollection blahColl = blahDB.getCollection("blahs");
+        DBCursor cursor = blahColl.find(new BasicDBObject("G", groupId));
+
+        while (cursor.hasNext()) {
+            BasicDBObject blah = (BasicDBObject) cursor.next();
+            BasicDBObject cohortStrength = (BasicDBObject) blah.get("CHS");
+            if (cohortStrength == null) {
+                cohortStrength = new BasicDBObject();
+                blah.put("CHS", cohortStrength);
+            }
+            for (String cohortId : cohortIdList) {
+                cohortStrength.put(cohortId, Math.random()/2);
+            }
+            blahColl.save(blah);
+        }
         System.out.println("done");
     }
 }
