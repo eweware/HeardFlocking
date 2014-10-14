@@ -18,6 +18,12 @@ public class CohortClustering {
     final MongoClient mongoClient;
     DB userDB;
     DB blahDB;
+    DBCollection groupsColl;
+    DBCollection userGroupsColl;
+    DBCollection blahsColl;
+    DBCollection userBlahInfoColl;
+    DBCollection cohortColl;
+
     final String groupId;
     String groupName;
 
@@ -41,6 +47,10 @@ public class CohortClustering {
     HashMap<String, HashMap<String, Double>> interestBlahInUser = new HashMap<String, HashMap<String, Double>>();
     int blahActiveCount = 0; // #blah with any activity in the group
     int userActiveCount = 0; // #user with any activity in the group
+
+    // mapping cohorts between two generations, new cohortId -> old cohortId
+    HashMap<String, String> cohortMapping = new HashMap<String, String>();
+    double sameCohortThreshold = 0.9;
 
     // cohort clustering result
     HashMap<String, List<String>> userPerCohort = new HashMap<String, List<String>>(); // cohortId -> List of userId
@@ -88,6 +98,9 @@ public class CohortClustering {
         // put result into cohort hashmap
         produceCohortHashMap(cluster, numCohortKMeans);
 
+        // find counterpart of new cohorts in previous generation
+        buildCohortMapping();
+
         // write cohort info into mongo
         outputCohortToMongo();
 
@@ -99,16 +112,19 @@ public class CohortClustering {
     private void initDatabase() throws UnknownHostException {
         userDB = mongoClient.getDB("userdb");
         blahDB = mongoClient.getDB("blahdb");
+        groupsColl = userDB.getCollection("groups");
+        blahsColl = blahDB.getCollection("blahs");
+        userGroupsColl = userDB.getCollection("usergroups");
+        userBlahInfoColl = userDB.getCollection("userBlahInfo");
+        cohortColl = userDB.getCollection("cohorts");
     }
 
     private void getGroupName() {
-        DBCollection groupsColl = userDB.getCollection("groups");
         BasicDBObject obj = (BasicDBObject) groupsColl.findOne(new BasicDBObject("_id", new ObjectId(groupId)));
         groupName = obj.getString("N");
     }
 
     private void countAndIndexBlah() {
-        DBCollection blahsColl = blahDB.getCollection("blahs");
         BasicDBObject queryGroup = new BasicDBObject("G", groupId);
         DBCursor cursor = blahsColl.find(queryGroup);
         while (cursor.hasNext()) {
@@ -122,7 +138,6 @@ public class CohortClustering {
     }
 
     private void countAndIndexUser() {
-        DBCollection userGroupsColl = userDB.getCollection("usergroups");
         BasicDBObject queryGroup = new BasicDBObject("G", groupId);
         DBCursor cursor = userGroupsColl.find(queryGroup);
         while (cursor.hasNext()) {
@@ -141,7 +156,6 @@ public class CohortClustering {
     }
 
     private void computeInterestAll() {
-        DBCollection userBlahInfoColl = userDB.getCollection("userBlahInfo");
         BasicDBObject queryGroup = new BasicDBObject("G", groupId);
         DBCursor cursor = userBlahInfoColl.find(queryGroup);
 
@@ -231,7 +245,52 @@ public class CohortClustering {
                 userPerCohort.get(cohortId).add(userId);
             }
         }
+    }
 
+    private void buildCohortMapping() {
+        // get userId list for each cohort in previous generation
+        HashMap<String, List<String>> prevUserPerCohort = new HashMap<String, List<String>>();
+        // get previous generation id
+        DBObject groupDoc = (DBObject) groupsColl.findOne(new BasicDBObject("_id", new ObjectId(groupId)));
+        String prevGenId = (String) groupDoc.get("CG");
+        // get previous generation cohortId set
+        DBObject cohortGens = (DBObject)groupDoc.get("CHG");
+        DBObject genDoc = (DBObject) cohortGens.get(prevGenId);
+        DBObject cohortInfo = (DBObject) genDoc.get("CHI");
+        Set<String> prevCohortIdSet = cohortInfo.keySet();
+        // get previous generation cohort-ser map
+        for (String cohorId : prevCohortIdSet) {
+            DBObject cohortDoc = (DBObject) cohortColl.findOne(new BasicDBObject("_id", new ObjectId(cohorId)));
+            prevUserPerCohort.put(cohorId, (List<String>) cohortDoc.get("U"));
+        }
+        // map each new cohort to one of the cohort in previous generation, or null
+        for (String cohortId : userPerCohort.keySet()) {
+            List<String> userIdList = userPerCohort.get(cohortId);
+            Set<String> userIdSet = new HashSet<String>(userIdList);
+            boolean foundParent = false;
+            for (String prevCohortId : prevUserPerCohort.keySet()) {
+                List<String> prevUserIdList = prevUserPerCohort.get(prevCohortId);
+                int common = countCommonUser(userIdSet, prevUserIdList);
+                if ((double)common / userIdList.size() > sameCohortThreshold && (double)common / prevUserIdList.size() > sameCohortThreshold) {
+                    cohortMapping.put(cohortId, prevCohortId);
+                    foundParent = true;
+                    break;
+                }
+            }
+            if (!foundParent) {
+                cohortMapping.put(cohortId, null);
+            }
+        }
+    }
+
+    private int countCommonUser(Set<String> setA, List<String> B) {
+        int count = 0;
+        for (String b : B) {
+            if (setA.contains(b)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private void outputCohortToMongo() {
@@ -240,19 +299,15 @@ public class CohortClustering {
         // insert userdb.cohorts
         //  _id: ObjectId   cohortId
         //  U:   String[]   userId[]
-        DBCollection cohortColl = userDB.getCollection("cohorts");
-
         for (String cohortId : userPerCohort.keySet()) {
             List<String> userIdList = userPerCohort.get(cohortId);
             cohortColl.insert(
-                    new BasicDBObject("_id", new ObjectId(cohortId)).append("N", userIdList.size()).append("G", groupName).append("U", userIdList)
+                    new BasicDBObject("_id", new ObjectId(cohortId)).append("N", userIdList.size()).append("G", groupName).append("U", userIdList).append("P", cohortMapping.get(cohortId))
             );
         }
         //cohortBuilder.execute();
 
         // insert cohort generation info into userdb.groups
-        DBCollection groupsColl = userDB.getCollection("groups");
-
         BasicDBObject groupEntry = new BasicDBObject("_id", new ObjectId(groupId));
         String generationId = new ObjectId().toString();
         BasicDBObject cohortInfoDoc = new BasicDBObject();
@@ -273,8 +328,7 @@ public class CohortClustering {
 
     private void writeFakeBlahCohortStrength() {
         System.out.print("Writing fake cohort-strength to blahs...");
-        DBCollection blahColl = blahDB.getCollection("blahs");
-        DBCursor cursor = blahColl.find(new BasicDBObject("G", groupId));
+        DBCursor cursor = blahsColl.find(new BasicDBObject("G", groupId));
 
         while (cursor.hasNext()) {
             BasicDBObject blah = (BasicDBObject) cursor.next();
@@ -286,7 +340,7 @@ public class CohortClustering {
             for (String cohortId : cohortIdList) {
                 cohortStrength.put(cohortId, Math.random()/2);
             }
-            blahColl.save(blah);
+            blahsColl.save(blah);
         }
         System.out.println("done");
     }
