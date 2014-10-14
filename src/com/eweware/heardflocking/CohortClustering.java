@@ -10,15 +10,12 @@ import java.util.*;
  * Created by weihan on 10/10/14.
  */
 public class CohortClustering {
-    public CohortClustering(String server, int port, String groupId) {
-        this.groupId = groupId;
-        mongoServer = server;
-        mongoServerPort = port;
+    public CohortClustering(MongoClient mongo, String id) {
+        this.groupId = id;
+        mongoClient = mongo;
     }
     // mongo server and databases
-    final String mongoServer;
-    final int mongoServerPort;
-    MongoClient mongoClient;
+    final MongoClient mongoClient;
     DB userDB;
     DB blahDB;
     final String groupId;
@@ -49,7 +46,7 @@ public class CohortClustering {
     HashMap<String, List<String>> userPerCohort = new HashMap<String, List<String>>(); // cohortId -> List of userId
     List<String> cohortIdList = new ArrayList<String>(); // list of cohortId for this group
 
-    public void run() throws UnknownHostException {
+    public void execute() throws UnknownHostException {
         // open MongoDB connection
         initDatabase();
 
@@ -100,7 +97,6 @@ public class CohortClustering {
     }
 
     private void initDatabase() throws UnknownHostException {
-        mongoClient = new MongoClient(mongoServer, mongoServerPort);
         userDB = mongoClient.getDB("userdb");
         blahDB = mongoClient.getDB("blahdb");
     }
