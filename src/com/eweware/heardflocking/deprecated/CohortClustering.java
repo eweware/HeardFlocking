@@ -1,8 +1,11 @@
-package com.eweware.heardflocking;
+package com.eweware.heardflocking.deprecated;
 
+import com.eweware.heardflocking.deprecated.KMeansClustering;
 import com.mongodb.*;
 import org.bson.types.ObjectId;
 
+import java.io.FileWriter;
+import java.io.IOException;
 import java.net.UnknownHostException;
 import java.util.*;
 
@@ -14,6 +17,9 @@ public class CohortClustering {
         this.groupId = id;
         mongoClient = mongo;
     }
+
+    private final boolean research = true;
+
     // mongo server and databases
     final MongoClient mongoClient;
     DB userDB;
@@ -52,6 +58,9 @@ public class CohortClustering {
     HashMap<String, String> cohortMapping = new HashMap<String, String>();
     double sameCohortThreshold = 0.9;
 
+    // user-blah interest matrix
+    double[][] data;
+
     // cohort clustering result
     HashMap<String, List<String>> userPerCohort = new HashMap<String, List<String>>(); // cohortId -> List of userId
     List<String> cohortIdList = new ArrayList<String>(); // list of cohortId for this group
@@ -80,7 +89,14 @@ public class CohortClustering {
         System.out.println("#user active : " + userActiveCount);
 
         // convert interestBlahInUser into matrix, using blahIdIndexMap
-        double[][] data = getInterestMatrix();
+        getInterestMatrix();
+
+        // to do separate research on the data, output to files
+        if (research) {
+            System.out.println("Writing data to local files for research, no clustering is done.");
+            outputResearchFiles();
+            return;
+        }
 
         // k-means to cluster users
         int[] kmeansResult = KMeansClustering.run(data, numCohortKMeans);
@@ -203,7 +219,7 @@ public class CohortClustering {
 
     private double[][] getInterestMatrix() {
         // default set to 0
-        double[][] data = new double[userCount][blahCount];
+        data = new double[userCount][blahCount];
 
         // for each user
         for (String userId : interestBlahInUser.keySet()) {
@@ -221,6 +237,32 @@ public class CohortClustering {
             }
         }
         return data;
+    }
+
+    private void outputResearchFiles() {
+        //long version = new Date().getTime() / 1000;
+        String version = "";
+        String dataFileName = "research/" + version + "data_" + groupName.toLowerCase().replace(' ','_') + ".csv";
+
+        try {
+            FileWriter writer = new FileWriter(dataFileName);
+
+            for (int n = 0; n < data.length; n++) {
+                for (int m = 0; m < data[0].length; m++) {
+                    writer.append(new Integer((int)data[n][m]).toString());
+                    if (m != data[0].length - 1) {
+                        writer.append(",");
+                    }
+                }
+                writer.append("\n");
+                writer.flush();
+            }
+            writer.close();
+
+        }
+        catch(IOException e) {
+            e.printStackTrace();
+        }
     }
 
     // cluster input : userIndex -> list of clusterIndex
@@ -251,7 +293,7 @@ public class CohortClustering {
         // get userId list for each cohort in previous generation
         HashMap<String, List<String>> prevUserPerCohort = new HashMap<String, List<String>>();
         // get previous generation id
-        DBObject groupDoc = (DBObject) groupsColl.findOne(new BasicDBObject("_id", new ObjectId(groupId)));
+        DBObject groupDoc = groupsColl.findOne(new BasicDBObject("_id", new ObjectId(groupId)));
         String prevGenId = (String) groupDoc.get("CG");
         // get previous generation cohortId set
         DBObject cohortGens = (DBObject)groupDoc.get("CHG");

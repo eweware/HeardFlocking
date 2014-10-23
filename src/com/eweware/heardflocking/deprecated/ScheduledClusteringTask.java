@@ -1,4 +1,4 @@
-package com.eweware.heardflocking;
+package com.eweware.heardflocking.deprecated;
 
 import com.mongodb.BasicDBObject;
 import com.mongodb.DBCollection;
