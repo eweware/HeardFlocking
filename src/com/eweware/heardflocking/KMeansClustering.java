@@ -1,4 +1,4 @@
-package com.eweware.heardflocking.deprecated;
+package com.eweware.heardflocking;
 
 import java.util.Arrays;
 
