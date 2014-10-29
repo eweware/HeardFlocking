@@ -1,4 +1,4 @@
-package com.eweware.heardflocking;
+package com.eweware.heardflocking.cohort;
 
 import java.util.Arrays;
 

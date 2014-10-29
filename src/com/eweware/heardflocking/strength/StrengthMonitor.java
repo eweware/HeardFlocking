@@ -1,11 +1,16 @@
-package com.eweware.heardflocking;
+package com.eweware.heardflocking.strength;
 
+import com.eweware.heardflocking.AzureConstants;
+import com.eweware.heardflocking.DBConstants;
 import com.microsoft.azure.storage.*;
 import com.microsoft.azure.storage.queue.*;
 import com.mongodb.*;
 import com.mongodb.util.JSON;
 
 import java.net.UnknownHostException;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -82,7 +87,7 @@ public class StrengthMonitor extends TimerTask {
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection... ");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
+        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DEV_DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
         infoDB = mongoClient.getDB("infodb");
 
@@ -113,12 +118,14 @@ public class StrengthMonitor extends TimerTask {
         // get all relevant blah info
         BasicDBObject query = new BasicDBObject();
         query.put(DBConstants.BlahInfo.CREATE_TIME, new BasicDBObject("$gt", earliestRelevantDate));
-
+        BasicDBObject or = new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date()));
+        or.append(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false));
+        query.put("$or", or);
         Cursor cursor = blahInfoCol.find(query);
 
         while (cursor.hasNext()) {
             BasicDBObject blahInfo = (BasicDBObject) cursor.next();
-            String blahId = blahInfo.getString(DBConstants.BlahInfo.BLAH_ID);
+            String blahId = blahInfo.getString(DBConstants.BlahInfo.ID);
 
             System.out.print("Checking blah <" + blahId + "> ... ");
 
@@ -147,8 +154,12 @@ public class StrengthMonitor extends TimerTask {
 
     private void scanUsers() throws StorageException {
         System.out.println("### Start scanning users...");
-        // get all user-group info
-        Cursor cursor = userGroupInfoCol.find();
+        // get user-group info
+        BasicDBObject or = new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date()));
+        or.append(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false));
+        BasicDBObject query = new BasicDBObject("$or", or);
+
+        Cursor cursor = userGroupInfoCol.find(query);
 
         while (cursor.hasNext()) {
             BasicDBObject userGroupInfo = (BasicDBObject) cursor.next();
@@ -182,11 +193,13 @@ public class StrengthMonitor extends TimerTask {
     private boolean blahIsActive(BasicDBObject blahInfo) {
         // get activity stats
         RecentBlahActivity stats = new RecentBlahActivity(blahInfo);
+
+        updateBlahNextCheckTime(stats);
+
         if (stats.comments + stats.upvotes + stats.downvotes >= 3) {
             // re-compute strength
-            // remove new activity from blahinfo collection
-            String blahId = blahInfo.getString(DBConstants.BlahInfo.BLAH_ID);
-            removeRecentBlahActivity(blahId, stats);
+            // remove new activity from infodb.blahInfo collection
+            removeRecentBlahActivity(stats);
             return true;
         }
         else {
@@ -197,12 +210,13 @@ public class StrengthMonitor extends TimerTask {
     private boolean userIsActive(BasicDBObject userGroupInfo) {
         // get activity stats
         RecentUserActivity stats = new RecentUserActivity(userGroupInfo);
+
+        updateUserNextCheckTime(stats);
+
         if (stats.comments + stats.upvotes + stats.downvotes >= 5) {
             // re-compute strength
-            // remove new activity from usergroupinfo collection
-            String userId = userGroupInfo.getString(DBConstants.UserGroupInfo.USER_ID);
-            String groupId = userGroupInfo.getString(DBConstants.UserGroupInfo.GROUP_ID);
-            //removeRecentUserActivity(userId, groupId, stats);
+            // remove new activity from infodb.usergroupInfo collection
+            removeRecentUserActivity(stats);
             return true;
         }
         else {
@@ -211,6 +225,9 @@ public class StrengthMonitor extends TimerTask {
     }
 
     private class RecentBlahActivity {
+        String blahId;
+        Date lastUpdate;
+
         int views;
         int opens;
         int comments;
@@ -220,6 +237,9 @@ public class StrengthMonitor extends TimerTask {
         int commentDownvotes;
 
         private RecentBlahActivity(BasicDBObject blahInfo) {
+            blahId = blahInfo.getString(DBConstants.BlahInfo.ID);
+            lastUpdate = blahInfo.getDate(DBConstants.BlahInfo.STRENGTH_UPDATE_TIME, new Date(0L));
+
             views = blahInfo.getInt(DBConstants.BlahInfo.NEW_VIEWS, 0);
             opens = blahInfo.getInt(DBConstants.BlahInfo.NEW_OPENS, 0);
             comments = blahInfo.getInt(DBConstants.BlahInfo.NEW_COMMENTS, 0);
@@ -231,6 +251,10 @@ public class StrengthMonitor extends TimerTask {
     }
 
     private class RecentUserActivity {
+        String userId;
+        String groupId;
+        Date lastUpdate;
+
         int views;
         int opens;
         int comments;
@@ -240,6 +264,10 @@ public class StrengthMonitor extends TimerTask {
         int commentDownvotes;
 
         private RecentUserActivity(BasicDBObject userGroupInfo) {
+            userId = userGroupInfo.getString(DBConstants.UserGroupInfo.USER_ID);
+            groupId = userGroupInfo.getString(DBConstants.UserGroupInfo.GROUP_ID);
+            lastUpdate = userGroupInfo.getDate(DBConstants.UserGroupInfo.STRENGTH_UPDATE_TIME, new Date(0L));
+
             views = userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_VIEWS, 0);
             opens = userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_OPENS, 0);
             comments = userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_COMMENTS, 0);
@@ -250,7 +278,57 @@ public class StrengthMonitor extends TimerTask {
         }
     }
 
-    private void removeRecentBlahActivity(String blahId, RecentBlahActivity stats) {
+    private void updateBlahNextCheckTime(RecentBlahActivity stats) {
+
+        // hopefully in the future MongoDB can support java.time objects
+        LocalDateTime lastUpdate = LocalDateTime.ofInstant(stats.lastUpdate.toInstant(), ZoneId.systemDefault());
+        long hoursPassedSinceUpdate = ChronoUnit.HOURS.between(lastUpdate, LocalDateTime.now());
+        double openPerHour = stats.opens / (double)hoursPassedSinceUpdate;
+
+        // if get less than 1 open per hour on average, check again in 3 days
+        // otherwise set to now, so it will be checked in next scan (no matter how frequently the scan is)
+        LocalDateTime nextCheckTime;
+        if (openPerHour < 0) {
+            nextCheckTime = LocalDateTime.now().plusDays(3);
+        }
+        else {
+            nextCheckTime = LocalDateTime.now();
+        }
+        // update database
+        Date nextCheckTimeDate = Date.from(nextCheckTime.atZone(ZoneId.systemDefault()).toInstant());
+
+        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, stats.blahId);
+        BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, nextCheckTimeDate));
+
+        blahInfoCol.update(query, setter);
+    }
+
+    private void updateUserNextCheckTime(RecentUserActivity stats) {
+        // hopefully in the future MongoDB can support java.time objects
+        LocalDateTime lastUpdate = LocalDateTime.ofInstant(stats.lastUpdate.toInstant(), ZoneId.systemDefault());
+        long hoursPassedSinceUpdate = ChronoUnit.HOURS.between(lastUpdate, LocalDateTime.now());
+        double openPerHour = stats.opens / (double)hoursPassedSinceUpdate;
+
+        // if get less than 1 open per hour on average, check again in 3 days
+        // otherwise set to now, so it will be checked in next scan (no matter how frequently the scan is)
+        LocalDateTime nextCheckTime;
+        if (openPerHour < 0) {
+            nextCheckTime = LocalDateTime.now().plusDays(3);
+        }
+        else {
+            nextCheckTime = LocalDateTime.now();
+        }
+        // update database
+        Date nextCheckTimeDate = Date.from(nextCheckTime.atZone(ZoneId.systemDefault()).toInstant());
+
+        BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, stats.userId);
+        query.append(DBConstants.UserGroupInfo.GROUP_ID, stats.groupId);
+        BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.UserGroupInfo.NEXT_CHECK_TIME, nextCheckTimeDate));
+
+        userGroupInfoCol.update(query, setter);
+    }
+
+    private void removeRecentBlahActivity(RecentBlahActivity stats) {
         // there may be even newer activity when we are checking the recent activities of the blah
         // so subtract the stats in database by the amount in our check
         BasicDBObject values = new BasicDBObject();
@@ -263,11 +341,12 @@ public class StrengthMonitor extends TimerTask {
         if (stats.commentDownvotes > 0) values.put(DBConstants.BlahInfo.NEW_COMMENT_DOWNVOTES, -stats.commentDownvotes);
 
         BasicDBObject inc = new BasicDBObject("$inc", values);
-        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.BLAH_ID, blahId);
+        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, stats.blahId);
+
         blahInfoCol.update(query, inc);
     }
 
-    private void removeRecentUserActivity(String userId, String groupId, RecentUserActivity stats) {
+    private void removeRecentUserActivity(RecentUserActivity stats) {
         // there may be even newer activity when we are checking the recent activities of the user
         // so subtract the stats in database by the amount in our check
         BasicDBObject values = new BasicDBObject();
@@ -280,8 +359,9 @@ public class StrengthMonitor extends TimerTask {
         if (stats.commentDownvotes > 0) values.put(DBConstants.UserGroupInfo.NEW_COMMENT_DOWNVOTES, -stats.commentDownvotes);
 
         BasicDBObject inc = new BasicDBObject("$inc", values);
-        BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, userId);
-        query.append(DBConstants.UserGroupInfo.GROUP_ID, groupId);
+        BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, stats.userId);
+        query.append(DBConstants.UserGroupInfo.GROUP_ID, stats.groupId);
+
         userGroupInfoCol.update(query, inc);
     }
 }

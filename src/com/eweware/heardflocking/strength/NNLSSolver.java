@@ -1,6 +1,7 @@
-package com.eweware.heardflocking;
+package com.eweware.heardflocking.strength;
 
-import java.lang.Double;import java.lang.Integer;import java.lang.Math;import java.lang.String;import java.util.ArrayList;
+import java.lang.Double;import java.lang.Integer;import java.lang.Math;
+import java.util.ArrayList;
 import java.util.List;
 
 //import edu.asu.zeissreading.OutFileWriter;

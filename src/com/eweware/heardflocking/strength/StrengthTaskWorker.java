@@ -1,7 +1,9 @@
-package com.eweware.heardflocking;
+package com.eweware.heardflocking.strength;
 
 
 import Jama.Matrix;
+import com.eweware.heardflocking.AzureConstants;
+import com.eweware.heardflocking.DBConstants;
 import com.microsoft.azure.storage.CloudStorageAccount;
 import com.microsoft.azure.storage.OperationContext;
 import com.microsoft.azure.storage.queue.CloudQueue;
@@ -60,7 +62,8 @@ public class StrengthTaskWorker {
                         if (processTask(task)) {
                             // success, delete message
                             strengthTaskQueue.deleteMessage(message);
-                        } else {
+                        }
+                        else {
                             // fail, reset message to be visible
                             // notice, if processing task throws exception, the task is then deleted
                             // for now, all tasks are processed successfully or throw exception
@@ -71,12 +74,14 @@ public class StrengthTaskWorker {
                     catch (Exception e) {
                         // there is something wrong about the task
                         // task is abandoned, deleted from queue
-                        System.out.println(e.getMessage());
-                        e.printStackTrace();
-                        //strengthTaskQueue.deleteMessage(message);
+                        if (e.getMessage().equals("OK")) {
+                            strengthTaskQueue.deleteMessage(message);
+                        }
+                        else e.printStackTrace();
                     }
                 }
                 else {
+                    System.out.println("No more tasks, rest for " + noTaskWaitMillis + " milliseconds.");
                     Thread.sleep(noTaskWaitMillis);
                 }
             }
@@ -109,7 +114,7 @@ public class StrengthTaskWorker {
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection... ");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
+        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DEV_DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
         infoDB = mongoClient.getDB("infodb");
 
@@ -147,6 +152,7 @@ public class StrengthTaskWorker {
     }
 
     private HashMap<String, Double> computeBlahStrength(String blahId, String groupId) throws Exception {
+        System.out.print("Compute strength blah id : " + blahId + " ...");
         // get user-blah util vector for this blah
         BasicDBObject query = new BasicDBObject();
         query.put(DBConstants.UserBlahInfo.BLAH_ID, blahId);
@@ -165,6 +171,12 @@ public class StrengthTaskWorker {
             }
         }
         cursor.close();
+
+        if (userUtilList.size() == 0) {
+            System.out.println("no activity for the blah, abort");
+            throw new Exception("OK");
+        }
+
         // convert to double[]
         double[] userUtilVec = new double[userUtilList.size()];
         for (int i = 0; i < userUtilList.size(); i++)
@@ -183,7 +195,7 @@ public class StrengthTaskWorker {
         BasicDBObject generationInfo = (BasicDBObject) generationInfoCol.findOne(query);
         if (group == null) throw new Exception("Generation not found for ID : " + generationId);
 
-        BasicDBObject cohortInboxInfo = (BasicDBObject) generationInfo.get(DBConstants.GenerationInfo.COHORT_INBOX_INFO);
+        BasicDBObject cohortInboxInfo = (BasicDBObject) generationInfo.get(DBConstants.GenerationInfo.COHORT_INFO);
 
         int c = 0;
         for (String cohortId : cohortInboxInfo.keySet())
@@ -200,7 +212,7 @@ public class StrengthTaskWorker {
             BasicDBObject userGroupInfo = (BasicDBObject) userGroupInfoCol.findOne(query);
             if (userGroupInfo == null) {
                 System.out.println("User-Group Info not found for userID : " + userId + " groupId : " + groupId);
-                //throw new Exception("User-Group Info not found for userID : " + userId + " groupId : " + groupId);
+                throw new Exception("OK");
             }
             else {
                 List<String> userCohortIdList = (List<String>) userGroupInfo.get(DBConstants.UserGroupInfo.COHORT_LIST);
@@ -218,7 +230,14 @@ public class StrengthTaskWorker {
         Matrix A = new Matrix(userCohortMtx);
         Matrix b = new Matrix(userUtilVec, userUtilVec.length);
         // non-negative least squares, based on JAMA
-        Matrix x = NNLSSolver.solveNNLS(A, b);
+        Matrix x;
+        try {
+            x = NNLSSolver.solveNNLS(A, b);
+        }
+        catch (RuntimeException e) {
+            System.out.println(e.getMessage());
+            throw new Exception("OK");
+        }
         double[] cohortStrengthVec = x.getColumnPackedCopy();
 
         // build cohortIdStrengthMap
@@ -228,6 +247,7 @@ public class StrengthTaskWorker {
             cohortStrength.put(cohortId, cohortStrengthVec[index]);
         }
 
+        System.out.print("done");
         return cohortStrength;
     }
 
@@ -251,18 +271,21 @@ public class StrengthTaskWorker {
     }
 
     private void updateBlahStrength(String blahId, HashMap<String, Double> cohortStrength) {
+        System.out.print(" and update database...");
         BasicDBObject values = new BasicDBObject();
         for (String cohortId : cohortStrength.keySet()) {
             values.put(DBConstants.BlahInfo.STRENGTH + "." + cohortId, cohortStrength.get(cohortId));
         }
         values.put(DBConstants.BlahInfo.STRENGTH_UPDATE_TIME, new Date());
 
-        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.BLAH_ID, blahId);
+        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, blahId);
         BasicDBObject setter = new BasicDBObject("$set", values);
         blahInfoCol.update(query, setter);
+        System.out.println("done");
     }
 
     private HashMap<String, Double> computeUserStrength(String userId, String groupId) {
+        System.out.print("Compute strength user id : " + userId + " in groupd id : " + groupId + " ...");
         // get blahinfo authored by this user in this group
         BasicDBObject query = new BasicDBObject();
         query.put(DBConstants.BlahInfo.AUTHOR_ID, userId);
@@ -314,10 +337,12 @@ public class StrengthTaskWorker {
             avg /= blahStrengthList.size();
             userCohortStrength.put(cohortId, avg);
         }
+        System.out.print("done");
         return userCohortStrength;
     }
 
     private void updateUserStrength(String userId, String groupId, HashMap<String, Double> cohortStrength) {
+        System.out.print(" and update database...");
         BasicDBObject values = new BasicDBObject();
         for (String cohortId : cohortStrength.keySet()) {
             values.put(DBConstants.UserGroupInfo.STRENGTH + "." + cohortId, cohortStrength.get(cohortId));
@@ -328,5 +353,6 @@ public class StrengthTaskWorker {
         query.put(DBConstants.UserGroupInfo.GROUP_ID, groupId);
         BasicDBObject setter = new BasicDBObject("$set", values);
         blahInfoCol.update(query, setter);
+        System.out.println("done");
     }
 }

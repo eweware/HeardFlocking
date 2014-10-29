@@ -3,8 +3,7 @@ package com.eweware.heardflocking;
 import com.mongodb.*;
 
 import java.net.UnknownHostException;
-import java.util.Date;
-import java.util.Random;
+import java.util.*;
 
 /**
  * Created by weihan on 10/24/14.
@@ -31,14 +30,22 @@ public class TransferInfoData {
 
     private DBCollection blahsCol;
 
+    private HashMap<String, String> groupNames;
+
     private final boolean FAKE_NEW_ACTIVITY = true;
 
     private void execute() {
         try {
             initializeMongoDB();
-//            transferBlahInfo();
+
 //            transferUserBlahInfo();
-            transferUserGroupInfo();
+
+            for (String groupId : groupNames.keySet()) {
+                if (!groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
+
+                transferBlahInfo(groupId);
+//                transferUserGroupInfo(groupId);
+            }
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -46,7 +53,7 @@ public class TransferInfoData {
     }
 
     private void initializeMongoDB() throws UnknownHostException {
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
+        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DEV_DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
         infoDB = mongoClient.getDB("infodb");
         blahDB = mongoClient.getDB("blahdb");
@@ -63,17 +70,26 @@ public class TransferInfoData {
 
         blahsCol = blahDB.getCollection("blahs");
 
+        Cursor cursor = groupsCol.find();
+        groupNames = new HashMap<String, String>();
+        while (cursor.hasNext()) {
+            BasicDBObject group = (BasicDBObject) cursor.next();
+            groupNames.put(group.getObjectId("_id").toString(), group.getString("N"));
+        }
+        cursor.close();
     }
 
-    private void transferBlahInfo() {
+    private void transferBlahInfo(String groupId) {
         // read blah information from blahs
-        Cursor cursor = blahsCol.find();
+        Cursor cursor = blahsCol.find(new BasicDBObject("G", groupId));
         int i = 1;
         while (cursor.hasNext()) {
             BasicDBObject blah = (BasicDBObject) cursor.next();
             BlahInfo blahInfo = new BlahInfo(blah);
             writeBlahInfo(blahInfo);
-            System.out.println(i++ + " documents transferred from blahdb.blahs to infodb.blahInfo");
+            if (i % 100 == 0)
+                System.out.println(i + " documents transferred from blahdb.blahs to infodb.blahInfo");
+            i++;
         }
         cursor.close();
         System.out.println("done. " + i + "documents transferred.");
@@ -91,11 +107,11 @@ public class TransferInfoData {
             i++;
         }
         cursor.close();
-        System.out.println("done. " + i + "documents transferred.");
+        System.out.println("done. " + i + " documents transferred.");
     }
 
-    private void transferUserGroupInfo() {
-        Cursor cursor = userGroupCol.find();
+    private void transferUserGroupInfo(String groupId) {
+        Cursor cursor = userGroupCol.find(new BasicDBObject("G", groupId));
         int i = 1;
         while (cursor.hasNext()) {
             BasicDBObject userGroup = (BasicDBObject) cursor.next();
@@ -106,7 +122,7 @@ public class TransferInfoData {
             i++;
         }
         cursor.close();
-        System.out.println("done. " + i + "documents transferred.");
+        System.out.println("done. " + i + " documents transferred.");
     }
 
     private class BlahInfo {
@@ -115,31 +131,57 @@ public class TransferInfoData {
             createTime = blah.getDate("c");
             authorId = blah.getString("A");
             groupId = blah.getString("G");
+            opens = blah.getInt("O", 0);
+
+            text = blah.getString("T");
+            typeId = blah.getString("Y");
+            imageIds = (ArrayList<String>) blah.get("M");
+            badgeIds = (ArrayList<String>) blah.get("B");
+            matureFlag = blah.getBoolean("XXX");
+
         }
         private String blahId;
         private Date createTime;
         private String authorId;
         private String groupId;
+        private int opens;
+
+        private String text;
+        private String typeId;
+        private ArrayList<String> imageIds;
+        private ArrayList<String> badgeIds;
+        private Boolean matureFlag;
     }
 
     private void writeBlahInfo(BlahInfo blahInfo) {
         BasicDBObject values = new BasicDBObject();
-        values.put(DBConstants.BlahInfo.BLAH_ID, blahInfo.blahId);
+        values.put(DBConstants.BlahInfo.ID, blahInfo.blahId);
         values.put(DBConstants.BlahInfo.AUTHOR_ID, blahInfo.authorId);
         values.put(DBConstants.BlahInfo.GROUP_ID, blahInfo.groupId);
         values.put(DBConstants.BlahInfo.CREATE_TIME, blahInfo.createTime);
 
-        if (FAKE_NEW_ACTIVITY) {
+        values.put(DBConstants.BlahInfo.TEXT, blahInfo.text);
+        values.put(DBConstants.BlahInfo.TYPE_ID, blahInfo.typeId);
+        if (blahInfo.imageIds != null) values.put(DBConstants.BlahInfo.IMAGE_IDS, blahInfo.imageIds);
+        if (blahInfo.badgeIds != null) values.put(DBConstants.BlahInfo.BADGE_IDS, blahInfo.badgeIds);
+        if (blahInfo.matureFlag != null) values.put(DBConstants.BlahInfo.MATURE_FLAG, blahInfo.matureFlag);
+
+        if (FAKE_NEW_ACTIVITY && blahInfo.opens > 0) {
             Random rand = new Random();
-            values.put(DBConstants.BlahInfo.NEW_VIEWS, rand.nextInt(30));
-            values.put(DBConstants.BlahInfo.NEW_OPENS, rand.nextInt(10));
-            values.put(DBConstants.BlahInfo.NEW_COMMENTS, rand.nextInt(3));
-            values.put(DBConstants.BlahInfo.NEW_UPVOTES, rand.nextInt(2));
-            values.put(DBConstants.BlahInfo.NEW_DOWNVOTES, rand.nextInt(2));
+            int views = rand.nextInt(50);
+            int opens = views/2 > 0 ? rand.nextInt(views/2) : 0;
+            int comments = opens/2 > 0 ? rand.nextInt(opens/2) : 0;
+            int ups = opens/2 > 0 ? rand.nextInt(opens/2) : 0;
+            int downs = (opens/2 - ups) > 0 ? rand.nextInt(opens/2 - ups) : 0;
+            values.put(DBConstants.BlahInfo.NEW_VIEWS, views);
+            values.put(DBConstants.BlahInfo.NEW_OPENS, opens);
+            values.put(DBConstants.BlahInfo.NEW_COMMENTS, comments);
+            values.put(DBConstants.BlahInfo.NEW_UPVOTES, ups);
+            values.put(DBConstants.BlahInfo.NEW_DOWNVOTES, downs);
         }
 
         BasicDBObject setter = new BasicDBObject("$set", values);
-        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.BLAH_ID, blahInfo.blahId);
+        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, blahInfo.blahId);
         blahInfoCol.update(query, setter, true, false);
     }
 
@@ -166,16 +208,16 @@ public class TransferInfoData {
 
     private void writeUserBlahInfo(UserBlahInfo userBlahInfo) {
         BasicDBObject values = new BasicDBObject();
-        values.put(DBConstants.UserBlahInfo.BLAH_ID, userBlahInfo.blahId);
-        values.put(DBConstants.UserBlahInfo.USER_ID, userBlahInfo.userId);
-        if (userBlahInfo.views > 0) values.put(DBConstants.UserBlahInfo.VIEWS, userBlahInfo.views);
-        if (userBlahInfo.opens > 0) values.put(DBConstants.UserBlahInfo.OPENS, userBlahInfo.opens);
-        if (userBlahInfo.comments > 0) values.put(DBConstants.UserBlahInfo.COMMENTS, userBlahInfo.comments);
-        if (userBlahInfo.promotion > 0) values.put(DBConstants.UserBlahInfo.PROMOTION, userBlahInfo.promotion);
+        values.put(DBConstants.UserBlahStats.BLAH_ID, userBlahInfo.blahId);
+        values.put(DBConstants.UserBlahStats.USER_ID, userBlahInfo.userId);
+        if (userBlahInfo.views > 0) values.put(DBConstants.UserBlahStats.VIEWS, userBlahInfo.views);
+        if (userBlahInfo.opens > 0) values.put(DBConstants.UserBlahStats.OPENS, userBlahInfo.opens);
+        if (userBlahInfo.comments > 0) values.put(DBConstants.UserBlahStats.COMMENTS, userBlahInfo.comments);
+        if (userBlahInfo.promotion > 0) values.put(DBConstants.UserBlahStats.PROMOTION, userBlahInfo.promotion);
 
         BasicDBObject setter = new BasicDBObject("$set", values);
-        BasicDBObject query = new BasicDBObject(DBConstants.UserBlahInfo.BLAH_ID, userBlahInfo.blahId);
-        query.append(DBConstants.UserBlahInfo.USER_ID, userBlahInfo.userId);
+        BasicDBObject query = new BasicDBObject(DBConstants.UserBlahStats.BLAH_ID, userBlahInfo.blahId);
+        query.append(DBConstants.UserBlahStats.USER_ID, userBlahInfo.userId);
         userBlahInfoCol.update(query, setter, true, false);
     }
 
@@ -195,11 +237,16 @@ public class TransferInfoData {
 
         if (FAKE_NEW_ACTIVITY) {
             Random rand = new Random();
-            values.put(DBConstants.UserGroupInfo.NEW_VIEWS, rand.nextInt(30));
-            values.put(DBConstants.UserGroupInfo.NEW_OPENS, rand.nextInt(10));
-            values.put(DBConstants.UserGroupInfo.NEW_COMMENTS, rand.nextInt(3));
-            values.put(DBConstants.UserGroupInfo.NEW_UPVOTES, rand.nextInt(2));
-            values.put(DBConstants.UserGroupInfo.NEW_DOWNVOTES, rand.nextInt(2));
+            int views = rand.nextInt(50);
+            int opens = views/2 > 0 ? rand.nextInt(views/2) : 0;
+            int comments = opens/2 > 0 ? rand.nextInt(opens/2) : 0;
+            int ups = opens/2 > 0 ? rand.nextInt(opens/2) : 0;
+            int downs = (opens/2 - ups) > 0 ? rand.nextInt(opens/2 - ups) : 0;
+            values.put(DBConstants.UserGroupInfo.NEW_VIEWS, views);
+            values.put(DBConstants.UserGroupInfo.NEW_OPENS, opens);
+            values.put(DBConstants.UserGroupInfo.NEW_COMMENTS, comments);
+            values.put(DBConstants.UserGroupInfo.NEW_UPVOTES, ups);
+            values.put(DBConstants.UserGroupInfo.NEW_DOWNVOTES, downs);
         }
 
         BasicDBObject setter = new BasicDBObject("$set", values);
