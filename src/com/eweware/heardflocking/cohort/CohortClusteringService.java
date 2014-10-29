@@ -243,10 +243,10 @@ public class CohortClusteringService extends TimerTask{
 
     private void getGroups() {
         DBCursor cursor = groupsCol.find();
-        groupNames = new HashMap<String, String>();
+        groupNames = new HashMap<>();
         while (cursor.hasNext()) {
             BasicDBObject group = (BasicDBObject) cursor.next();
-            groupNames.put(group.getObjectId("_id").toString(), group.getString("N"));
+            groupNames.put(group.getObjectId(DBConstants.Groups.ID).toString(), group.getString(DBConstants.Groups.NAME));
         }
         cursor.close();
     }

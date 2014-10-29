@@ -32,6 +32,10 @@ public class StrengthMonitor extends TimerTask {
 
     private HashMap<String, String> groupNames;
 
+    private static final int RUN_PERIOD_HOUR = 24;
+    private final int RELEVANT_BLAH_MONTH = 24;
+
+
     public static void main(String[] args) {
         Timer timer = new Timer();
         Calendar cal = Calendar.getInstance();
@@ -43,11 +47,11 @@ public class StrengthMonitor extends TimerTask {
         cal.set(Calendar.MILLISECOND, 0);
 
         // set period
-        int periodHours = 24;
 
-        System.out.println("StrengthMonitor set to run once for every " + periodHours + " hours, starting at "  + cal.getTime().toString());
 
-        timer.schedule(new StrengthMonitor(), cal.getTime(), TimeUnit.HOURS.toMillis(periodHours));
+        System.out.println("StrengthMonitor set to run once for every " + RUN_PERIOD_HOUR + " hours, starting at "  + cal.getTime().toString());
+
+        timer.schedule(new StrengthMonitor(), cal.getTime(), TimeUnit.HOURS.toMillis(RUN_PERIOD_HOUR));
     }
 
     @Override
@@ -98,12 +102,15 @@ public class StrengthMonitor extends TimerTask {
 
         System.out.println("done");
 
-        // get group names
-        groupNames = new HashMap<String, String>();
+        getGroups();
+    }
+
+    private void getGroups() {
         DBCursor cursor = groupsCol.find();
+        groupNames = new HashMap<>();
         while (cursor.hasNext()) {
-            BasicDBObject obj = (BasicDBObject) cursor.next();
-            groupNames.put(obj.getObjectId("_id").toString(), obj.getString("N"));
+            BasicDBObject group = (BasicDBObject) cursor.next();
+            groupNames.put(group.getObjectId(DBConstants.Groups.ID).toString(), group.getString(DBConstants.Groups.NAME));
         }
         cursor.close();
     }
@@ -112,12 +119,13 @@ public class StrengthMonitor extends TimerTask {
         System.out.println("### Start scanning blahs...");
         // only look at blahs created within certain number of months
         Calendar cal = Calendar.getInstance();
-        cal.add(Calendar.MONTH, -24);
+        cal.add(Calendar.MONTH, -RELEVANT_BLAH_MONTH);
         Date earliestRelevantDate = cal.getTime();
 
         // get all relevant blah info
         BasicDBObject query = new BasicDBObject();
         query.put(DBConstants.BlahInfo.CREATE_TIME, new BasicDBObject("$gt", earliestRelevantDate));
+        // "relevant" also means the "next check time" for the blah has passed
         BasicDBObject or = new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date()));
         or.append(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false));
         query.put("$or", or);
@@ -155,6 +163,7 @@ public class StrengthMonitor extends TimerTask {
     private void scanUsers() throws StorageException {
         System.out.println("### Start scanning users...");
         // get user-group info
+        // only scan user whose "next check time" as passed
         BasicDBObject or = new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date()));
         or.append(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false));
         BasicDBObject query = new BasicDBObject("$or", or);
@@ -194,9 +203,12 @@ public class StrengthMonitor extends TimerTask {
         // get activity stats
         RecentBlahActivity stats = new RecentBlahActivity(blahInfo);
 
+        // determine next check time based on activity and last update time
         updateBlahNextCheckTime(stats);
 
-        if (stats.comments + stats.upvotes + stats.downvotes >= 3) {
+        int score = stats.opens + stats.comments * 5 + stats.upvotes * 10
+                + stats.downvotes * 10 + stats.commentUpvotes * 5 + stats.commentDownvotes * 5;
+        if (score >= 20) {
             // re-compute strength
             // remove new activity from infodb.blahInfo collection
             removeRecentBlahActivity(stats);
@@ -211,11 +223,14 @@ public class StrengthMonitor extends TimerTask {
         // get activity stats
         RecentUserActivity stats = new RecentUserActivity(userGroupInfo);
 
+        // determine next check time based on activity and last update time
         updateUserNextCheckTime(stats);
 
-        if (stats.comments + stats.upvotes + stats.downvotes >= 5) {
+        int score = stats.opens + stats.comments * 5 + stats.upvotes * 10
+                + stats.downvotes * 10 + stats.commentUpvotes * 5 + stats.commentDownvotes * 5;
+        if (score >= 20) {
             // re-compute strength
-            // remove new activity from infodb.usergroupInfo collection
+            // remove new activity from infodb.userGroupInfo collection
             removeRecentUserActivity(stats);
             return true;
         }
