@@ -6,6 +6,7 @@ import com.eweware.heardflocking.AzureConstants;
 import com.eweware.heardflocking.DBConstants;
 import com.microsoft.azure.storage.CloudStorageAccount;
 import com.microsoft.azure.storage.OperationContext;
+import com.microsoft.azure.storage.StorageException;
 import com.microsoft.azure.storage.queue.CloudQueue;
 import com.microsoft.azure.storage.queue.CloudQueueClient;
 import com.microsoft.azure.storage.queue.CloudQueueMessage;
@@ -24,6 +25,7 @@ public class StrengthTaskWorker {
 
     private CloudQueueClient queueClient;
     private CloudQueue strengthTaskQueue;
+    private CloudQueue inboxTaskQueue;
 
     private MongoClient mongoClient;
     private DB userDB;
@@ -110,9 +112,11 @@ public class StrengthTaskWorker {
 
         // Retrieve a reference to a queue.
         strengthTaskQueue = queueClient.getQueueReference(AzureConstants.STRENGTH_TASK_QUEUE);
+        inboxTaskQueue = queueClient.getQueueReference(AzureConstants.INBOX_TASK_QUEUE);
 
         // Create the queue if it doesn't already exist.
         strengthTaskQueue.createIfNotExists();
+        inboxTaskQueue.createIfNotExists();
 
         System.out.println("done");
     }
@@ -136,7 +140,7 @@ public class StrengthTaskWorker {
         System.out.println("done");
     }
 
-    private void processTask(BasicDBObject task) throws TaskException {
+    private void processTask(BasicDBObject task) throws TaskException, StorageException {
         int taskType = (Integer) task.get(AzureConstants.StrengthTask.TYPE);
 
         if (taskType == AzureConstants.StrengthTask.COMPUTE_BLAH_STRENGTH) {
@@ -152,7 +156,8 @@ public class StrengthTaskWorker {
             updateUserStrength(userId, groupId, cohortStrength);
         }
         else if (taskType == AzureConstants.StrengthTask.COMPUTE_ALL_STRENGTH) {
-
+            String groupId = (String) task.get(AzureConstants.StrengthTask.GROUP_ID);
+            computeAndUpdateAllStrength(groupId);
         }
         else {
             throw new TaskException("Error : undefined task type : " + taskType, TaskExceptionType.SKIP);
@@ -424,6 +429,81 @@ public class StrengthTaskWorker {
         query.put(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
         BasicDBObject setter = new BasicDBObject("$set", values);
         blahInfoCol.update(query, setter);
+        System.out.println("done");
+    }
+
+    private void computeAndUpdateAllStrength(String groupId) throws TaskException, StorageException {
+        // compute all blahs' strength
+        System.out.println("Start all blahs' strength for groupd : " + groupId);
+
+        List<String> blahIdList = getAllBlahs(groupId);
+
+        for (String blahId : blahIdList) {
+            HashMap<String, Double> cohortStrength = computeBlahStrength(blahId, groupId);
+            updateBlahStrength(blahId, cohortStrength);
+        }
+
+        System.out.println("All blah's strength computation is done");
+
+        // compute all users' strength
+        System.out.println("Start all users' strength for groupd : " + groupId);
+
+        List<String> userIdList = getAllUsers(groupId);
+
+        for (String userId : userIdList) {
+            HashMap<String, Double> cohortStrength = computeUserStrength(userId, groupId);
+            updateUserStrength(userId, groupId, cohortStrength);
+        }
+
+        System.out.println("All users' strength computation is done");
+
+        // produce new cluster inbox task
+        produceInboxTask(groupId);
+    }
+
+    private List<String> getAllBlahs(String groupId) {
+        System.out.print("Getting all blahs in this group...");
+        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.GROUP_ID, new ObjectId(groupId));
+        DBCursor cursor = blahInfoCol.find(query);
+
+        List<String> blahIdList = new ArrayList<>();
+        while (cursor.hasNext()) {
+            BasicDBObject blahInfo = (BasicDBObject) cursor.next();
+            blahIdList.add(blahInfo.getObjectId(DBConstants.BlahInfo.ID).toString());
+        }
+        cursor.close();
+        System.out.println("done");
+
+        return blahIdList;
+    }
+
+    private List<String> getAllUsers(String groupId) {
+        System.out.print("Getting all blahs in this group...");
+        BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
+        DBCursor cursor = userGroupInfoCol.find(query);
+
+        List<String> userIdList = new ArrayList<>();
+        while (cursor.hasNext()) {
+            BasicDBObject userGroupInfo = (BasicDBObject) cursor.next();
+            userIdList.add(userGroupInfo.getObjectId(DBConstants.UserGroupInfo.USER_ID).toString());
+        }
+        cursor.close();
+        System.out.println("done");
+
+        return userIdList;
+    }
+
+    private void produceInboxTask(String groupId) throws StorageException {
+        System.out.print("Producing new cluster inbox task...");
+
+        BasicDBObject task = new BasicDBObject();
+        task.put(AzureConstants.InboxTask.TYPE, AzureConstants.InboxTask.GENERATE_INBOX_NEW_CLUSTER);
+        task.put(AzureConstants.InboxTask.GROUP_ID, groupId);
+
+        // enqueue
+        CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
+        inboxTaskQueue.addMessage(message);
+
         System.out.println("done");
     }
 }
