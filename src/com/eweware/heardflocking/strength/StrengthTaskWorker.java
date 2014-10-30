@@ -175,7 +175,7 @@ public class StrengthTaskWorker {
         System.out.print("Compute strength blah id : " + blahId + " ...");
         // get user-blah util vector for this blah
         // aggregate each user's activities for this blah
-        BasicDBObject match = new BasicDBObject("$match", new BasicDBObject(DBConstants.UserBlahStats.BLAH_ID, blahId));
+        BasicDBObject match = new BasicDBObject("$match", new BasicDBObject(DBConstants.UserBlahStats.BLAH_ID, new ObjectId(blahId)));
 
         BasicDBObject groupFields = new BasicDBObject(DBConstants.UserBlahStats.USER_ID, DBConstants.UserBlahStats.USER_ID);
         groupFields.append(DBConstants.UserBlahStats.VIEWS, new BasicDBObject("$sum", DBConstants.UserBlahStats.VIEWS));
@@ -233,8 +233,8 @@ public class StrengthTaskWorker {
 
         for (int u = 0; u < userIdList.size(); u++) {
             String userId = userIdList.get(u);
-            query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, userId);
-            query.put(DBConstants.UserGroupInfo.GROUP_ID, groupId);
+            query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(userId));
+            query.put(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
 
             BasicDBObject userGroupInfo = (BasicDBObject) userGroupInfoCol.findOne(query);
 
@@ -284,8 +284,8 @@ public class StrengthTaskWorker {
         int promotion;
 
         private UserBlahInfo(DBObject userBlah) {
-            userId = (String) userBlah.get(DBConstants.UserBlahStats.USER_ID);
-            blahId = (String) userBlah.get(DBConstants.UserBlahStats.BLAH_ID);
+            userId = userBlah.get(DBConstants.UserBlahStats.USER_ID).toString();
+            blahId = userBlah.get(DBConstants.UserBlahStats.BLAH_ID).toString();
 
             Integer obj;
             obj = (Integer) userBlah.get(DBConstants.UserBlahStats.VIEWS);
@@ -345,12 +345,12 @@ public class StrengthTaskWorker {
     private List<String> getCohortIdList(String groupId) {
         // get this group's current generationId
         BasicDBObject query = new BasicDBObject();
-        query.put(DBConstants.UserGroupInfo.GROUP_ID, groupId);
+        query.put(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
         BasicDBObject group = (BasicDBObject) groupsCol.findOne(query);
-        ObjectId generationId = group.getObjectId(DBConstants.Groups.CURRENT_GENERATION);
+        ObjectId generationIdObj = group.getObjectId(DBConstants.Groups.CURRENT_GENERATION);
 
         // get this generation's cohort list
-        query = new BasicDBObject(DBConstants.GenerationInfo.ID, generationId);
+        query = new BasicDBObject(DBConstants.GenerationInfo.ID, generationIdObj);
         BasicDBObject generation = (BasicDBObject) generationInfoCol.findOne(query);
         BasicDBObject cohortInfo = (BasicDBObject) generation.get(DBConstants.GenerationInfo.COHORT_INFO);
 
@@ -370,8 +370,8 @@ public class StrengthTaskWorker {
 
         // get blahInfo authored by this user in this group
         BasicDBObject query = new BasicDBObject();
-        query.put(DBConstants.BlahInfo.AUTHOR_ID, userId);
-        query.put(DBConstants.BlahInfo.GROUP_ID, groupId);
+        query.put(DBConstants.BlahInfo.AUTHOR_ID, new ObjectId(userId));
+        query.put(DBConstants.BlahInfo.GROUP_ID, new ObjectId(groupId));
 
         // only consider blahs authored by the user in the recent certain number of months
         Calendar cal = Calendar.getInstance();
@@ -420,8 +420,8 @@ public class StrengthTaskWorker {
         }
         values.put(DBConstants.UserGroupInfo.STRENGTH_UPDATE_TIME, new Date());
 
-        BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, userId);
-        query.put(DBConstants.UserGroupInfo.GROUP_ID, groupId);
+        BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(userId));
+        query.put(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
         BasicDBObject setter = new BasicDBObject("$set", values);
         blahInfoCol.update(query, setter);
         System.out.println("done");

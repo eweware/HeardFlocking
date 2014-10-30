@@ -6,6 +6,7 @@ import com.microsoft.azure.storage.*;
 import com.microsoft.azure.storage.queue.*;
 import com.mongodb.*;
 import com.mongodb.util.JSON;
+import org.bson.types.ObjectId;
 
 import java.net.UnknownHostException;
 import java.time.LocalDateTime;
@@ -139,7 +140,7 @@ public class StrengthMonitor extends TimerTask {
 
             if (blahIsActive(blahInfo)) {
                 System.out.print("active, producing task... ");
-                String groupId = blahInfo.getString(DBConstants.BlahInfo.GROUP_ID);
+                String groupId = blahInfo.get(DBConstants.BlahInfo.GROUP_ID).toString();
 
                 // produce re-compute strength task
                 BasicDBObject task = new BasicDBObject();
@@ -172,13 +173,13 @@ public class StrengthMonitor extends TimerTask {
 
         while (cursor.hasNext()) {
             BasicDBObject userGroupInfo = (BasicDBObject) cursor.next();
-            String userId = (String) userGroupInfo.get(DBConstants.UserGroupInfo.USER_ID);
+            String userId = userGroupInfo.get(DBConstants.UserGroupInfo.USER_ID).toString();
 
             System.out.print("Checking user <" + userId + "> ... ");
 
             if (userIsActive(userGroupInfo)) {
                 System.out.print("active, producing task... ");
-                String groupId = (String) userGroupInfo.get(DBConstants.UserGroupInfo.GROUP_ID);
+                String groupId = userGroupInfo.get(DBConstants.UserGroupInfo.GROUP_ID).toString();
 
                 // produce re-compute strength task
                 BasicDBObject task = new BasicDBObject();
@@ -279,8 +280,8 @@ public class StrengthMonitor extends TimerTask {
         int commentDownvotes;
 
         private RecentUserActivity(BasicDBObject userGroupInfo) {
-            userId = userGroupInfo.getString(DBConstants.UserGroupInfo.USER_ID);
-            groupId = userGroupInfo.getString(DBConstants.UserGroupInfo.GROUP_ID);
+            userId = userGroupInfo.get(DBConstants.UserGroupInfo.USER_ID).toString();
+            groupId = userGroupInfo.get(DBConstants.UserGroupInfo.GROUP_ID).toString();
             lastUpdate = userGroupInfo.getDate(DBConstants.UserGroupInfo.STRENGTH_UPDATE_TIME, new Date(0L));
 
             views = userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_VIEWS, 0);
@@ -336,8 +337,8 @@ public class StrengthMonitor extends TimerTask {
         // update database
         Date nextCheckTimeDate = Date.from(nextCheckTime.atZone(ZoneId.systemDefault()).toInstant());
 
-        BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, stats.userId);
-        query.append(DBConstants.UserGroupInfo.GROUP_ID, stats.groupId);
+        BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(stats.userId));
+        query.append(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(stats.groupId));
         BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.UserGroupInfo.NEXT_CHECK_TIME, nextCheckTimeDate));
 
         userGroupInfoCol.update(query, setter);
@@ -356,7 +357,7 @@ public class StrengthMonitor extends TimerTask {
         if (stats.commentDownvotes > 0) values.put(DBConstants.BlahInfo.NEW_COMMENT_DOWNVOTES, -stats.commentDownvotes);
 
         BasicDBObject inc = new BasicDBObject("$inc", values);
-        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, stats.blahId);
+        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, new ObjectId(stats.blahId));
 
         blahInfoCol.update(query, inc);
     }
@@ -374,8 +375,8 @@ public class StrengthMonitor extends TimerTask {
         if (stats.commentDownvotes > 0) values.put(DBConstants.UserGroupInfo.NEW_COMMENT_DOWNVOTES, -stats.commentDownvotes);
 
         BasicDBObject inc = new BasicDBObject("$inc", values);
-        BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, stats.userId);
-        query.append(DBConstants.UserGroupInfo.GROUP_ID, stats.groupId);
+        BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(stats.userId));
+        query.append(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(stats.groupId));
 
         userGroupInfoCol.update(query, inc);
     }

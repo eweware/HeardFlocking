@@ -93,6 +93,7 @@ public interface DBConstants {
         public static final String ID = "_id";
         public static final String NAME = "N";
         public static final String CURRENT_GENERATION = "CG";
+        public static final String NEXT_GENERATION = "NG";
     }
 
 
