@@ -20,8 +20,7 @@ public interface AzureConstants {
 
         public static final int COMPUTE_BLAH_STRENGTH = 0;
         public static final int COMPUTE_USER_STRENGTH = 1;
-        public static final int COMPUTE_ALL_BLAH_STRENGTH = 2;
-        public static final int COMPUTE_ALL_USER_STRENGTH = 3;
+        public static final int COMPUTE_ALL_STRENGTH = 2;
     }
 
     public interface InboxTask {

@@ -1,7 +1,13 @@
 package com.eweware.heardflocking.cohort;
 
+import com.eweware.heardflocking.AzureConstants;
 import com.eweware.heardflocking.DBConstants;
+import com.microsoft.azure.storage.CloudStorageAccount;
+import com.microsoft.azure.storage.queue.CloudQueue;
+import com.microsoft.azure.storage.queue.CloudQueueClient;
+import com.microsoft.azure.storage.queue.CloudQueueMessage;
 import com.mongodb.*;
+import com.mongodb.util.JSON;
 import org.bson.types.ObjectId;
 
 import java.io.FileWriter;
@@ -57,8 +63,8 @@ public class CohortClusteringService extends TimerTask{
     String groupName;
 
     // weights for user-blah utility
-    final double wV = 0.0;
-    final double wO = 1.0;
+    final double wV = 1.0;
+    final double wO = 2.0;
     final double wC = 5.0;
     final double wP = 10.0;
 
@@ -96,6 +102,9 @@ public class CohortClusteringService extends TimerTask{
     String[] cohortIndexIdMap; // cohortIndex -> cohortId
     HashMap<String, List<String>> userPerCohort; // cohortId -> List of userId
     HashMap<String, List<String>> cohortPerUser; // userId -> List of chortId
+
+    private CloudQueueClient queueClient;
+    private CloudQueue strengthTaskQueue;
 
     @Override
     public void run() {
@@ -151,52 +160,14 @@ public class CohortClusteringService extends TimerTask{
                     return;
                 }
 
-
                 if (TRIVIAL_CLUSTERING) {
-                    System.out.print("Assigning trivial clustering...");
-
-                    numCohort = 1;
-                    cluster = new ArrayList[userCount];
-
-                    // assign all users to the same cohort
-                    for (int u = 0; u < userCount; u++) {
-                        cluster[u] = new ArrayList<>();
-                        cluster[u].add(0);
-                    }
-                    System.out.println("done");
+                    trivialClustering();
                 }
                 else if (RANDOM_CLUSTERING) {
-                    System.out.print("Assigning random clustering...");
-                    cluster = new ArrayList[userCount];
-                    Random rand = new Random();
-                    for (int u = 0; u < userCount; u++) {
-                        cluster[u] = new ArrayList<>();
-                        for (int i = 0; i < numCohort; i++) {
-                            if (rand.nextBoolean()) {
-                                cluster[u].add(i);
-                            }
-                        }
-                        // make sure the user is in at least one cluster
-                        if (cluster[u].size() == 0) {
-                            cluster[u].add(0);
-                        }
-                    }
-                    System.out.println("done");
-                } else {
-                    // k-means to cluster users
-                    int[] kmeansResult;
-                    kmeansResult = KMeansClustering.run(data, numCohort);
-                    if (kmeansResult == null) {
-                        throw new Exception("Error : k-means return null");
-                    }
-                    else {
-                        // turn k-means result into cluster form
-                        cluster = new ArrayList[kmeansResult.length];
-                        for (int u = 0; u < kmeansResult.length; u++) {
-                            cluster[u] = new ArrayList<Integer>();
-                            cluster[u].add(kmeansResult[u]);
-                        }
-                    }
+                    randomClustering();
+                }
+                else {
+                    kmeansClustering();
                 }
 
                 // put result into cohort hashmap
@@ -209,6 +180,9 @@ public class CohortClusteringService extends TimerTask{
                 outputCohortToMongo();
 
                 //writeFakeBlahCohortStrength();
+
+                // produce "compute all blah and user strength in this group" task and enqueue
+                produceStrengthTask();
 
                 System.out.println();
             }
@@ -329,24 +303,24 @@ public class CohortClusteringService extends TimerTask{
             else continue;
 
             // the aggregation is grouped by userId, for each user, compute utility and store
-            for (DBObject userBlahStats : output.results()) {
-                String userId = (String) userBlahStats.get(DBConstants.UserBlahStats.USER_ID);
+            for (DBObject userBlah : output.results()) {
+                UserBlahInfo userBlahInfo = new UserBlahInfo(userBlah);
 
                 // if this is a new user, count it
-                if (!userActiveSet.contains(userId)) {
-                    userActiveSet.add(userId);
+                if (!userActiveSet.contains(userBlahInfo.userId)) {
+                    userActiveSet.add(userBlahInfo.userId);
                     userActiveCount++;
                 }
 
-                double util = computeUtility(userBlahStats);
+                double util = computeUtility(userBlahInfo);
 
                 // utilityBlah : blahId -> utility
-                HashMap<String, Double> utilityBlah = utilityBlahInUser.get(userId);
+                HashMap<String, Double> utilityBlah = utilityBlahInUser.get(userBlahInfo.userId);
                 // if this is the first blah for this user, create the blahId -> utility hashmap for him
                 if (utilityBlah == null) {
                     utilityBlah = new HashMap<>();
                     utilityBlah.put(blahId, util);
-                    utilityBlahInUser.put(userId, utilityBlah);
+                    utilityBlahInUser.put(userBlahInfo.userId, utilityBlah);
                 } else {
                     utilityBlah.put(blahId, util);
                 }
@@ -354,25 +328,41 @@ public class CohortClusteringService extends TimerTask{
         }
     }
 
-    private double computeUtility(DBObject userBlah) {
+    private class UserBlahInfo {
+        String blahId;
+        String userId;
 
-        // view
-        Long V = (Long) userBlah.get(DBConstants.UserBlahStats.VIEWS);
-        V = V == null ? 0 : V;
-        // open
-        Long O = (Long)userBlah.get(DBConstants.UserBlahStats.OPENS);
-        O = O == null ? 0 : O;
-        // comment
-        Long C = (Long)userBlah.get(DBConstants.UserBlahStats.COMMENTS);
-        C = C == null ? 0 : C;
-        // promote
+        int views;
+        int opens;
+        int comments;
+        int promotion;
+
+        private UserBlahInfo(DBObject userBlah) {
+            userId = (String) userBlah.get(DBConstants.UserBlahStats.USER_ID);
+            blahId = (String) userBlah.get(DBConstants.UserBlahStats.BLAH_ID);
+
+            Integer obj;
+            obj = (Integer) userBlah.get(DBConstants.UserBlahStats.VIEWS);
+            views = obj == null ? 0 : obj;
+            obj = (Integer) userBlah.get(DBConstants.UserBlahStats.OPENS);
+            opens = obj == null ? 0 : obj;
+            obj = (Integer) userBlah.get(DBConstants.UserBlahStats.COMMENTS);
+            comments = obj == null ? 0 : obj;
+            obj = (Integer) userBlah.get(DBConstants.UserBlahStats.PROMOTION);
+            promotion = obj == null ? 0 : obj;
+        }
+    }
+
+    private double computeUtility(UserBlahInfo userBlahInfo) {
         // P > 0 upvote:    more people should see this
         // P < 0 downvode:  fewer people should see this
-        Long P = (Long)userBlah.get(DBConstants.UserBlahStats.PROMOTION);
-        P = P == null ? 0 : P;
 
-        // compute utility strength
-        return V * wV + O * wO + C * wC + P * wP;
+        // if a user view a blah but didn't open, that's a sign for negative utility
+        double util = userBlahInfo.opens * wO +
+                userBlahInfo.comments * wC +
+                userBlahInfo.promotion * wP -
+                Math.signum(userBlahInfo.views) * wV;
+        return util;
     }
 
     private void indexActiveBlah() throws Exception {
@@ -406,6 +396,56 @@ public class CohortClusteringService extends TimerTask{
             }
         }
         return data;
+    }
+
+    private void trivialClustering() {
+        System.out.print("Assigning trivial clustering...");
+
+        numCohort = 1;
+        cluster = new ArrayList[userCount];
+
+        // assign all users to the same cohort
+        for (int u = 0; u < userCount; u++) {
+            cluster[u] = new ArrayList<>();
+            cluster[u].add(0);
+        }
+        System.out.println("done");
+    }
+
+    private void randomClustering() {
+        System.out.print("Assigning random clustering...");
+        cluster = new ArrayList[userCount];
+        Random rand = new Random();
+        for (int u = 0; u < userCount; u++) {
+            cluster[u] = new ArrayList<>();
+            for (int i = 0; i < numCohort; i++) {
+                if (rand.nextBoolean()) {
+                    cluster[u].add(i);
+                }
+            }
+            // make sure the user is in at least one cluster
+            if (cluster[u].size() == 0) {
+                cluster[u].add(0);
+            }
+        }
+        System.out.println("done");
+    }
+
+    private void kmeansClustering() throws Exception {
+        // k-means to cluster users
+        int[] kmeansResult;
+        kmeansResult = KMeansClustering.run(data, numCohort);
+        if (kmeansResult == null) {
+            throw new Exception("Error : k-means return null");
+        }
+        else {
+            // turn k-means result into cluster form
+            cluster = new ArrayList[kmeansResult.length];
+            for (int u = 0; u < kmeansResult.length; u++) {
+                cluster[u] = new ArrayList<>();
+                cluster[u].add(kmeansResult[u]);
+            }
+        }
     }
 
     private void outputResearchFiles() {
@@ -518,9 +558,28 @@ public class CohortClusteringService extends TimerTask{
     }
 
     private void outputCohortToMongo() {
+
+        // insert cohort information into infodb.cohortInfo
+        insertCohortInfo();
+
+        // insert cohort generation info into infodb.generationInfo
+        ObjectId generationIdObj = insertGenerationInfo();
+
+        // write user's cohort info into infodb.usreGroupInfo "next generation cohort"
+        updateUserNextCohortInfo();
+
+        // write group current generation info
+        updateGroupCurrentGenId(generationIdObj);
+
+        // notice, update userGroupInfo.CH after the first set of inboxes are generated by inboxer
+        if (OUTPUT_COHORT_INFO_FOR_TEST) {
+            updateUserCohortInfo();
+        }
+    }
+
+    private void insertCohortInfo() {
         System.out.print("Writing cohort information to database...");
 
-        // insert infodb.cohortInfo
         for (String cohortId : userPerCohort.keySet()) {
             List<String> userIdList = userPerCohort.get(cohortId);
 
@@ -532,9 +591,11 @@ public class CohortClusteringService extends TimerTask{
             cohortInfoCol.insert(cohortInfo);
         }
         System.out.println("done");
+    }
 
-        // insert cohort generation info into infodb.generationInfo
+    private ObjectId insertGenerationInfo() {
         System.out.print("Writing generation information to database...");
+
         BasicDBObject cohortInfoDoc = new BasicDBObject();
         for (String cohortId : cohortIndexIdMap) {
             BasicDBObject defaultInbox = new BasicDBObject(DBConstants.GenerationInfo.FIRST_INBOX, -1L);
@@ -555,8 +616,12 @@ public class CohortClusteringService extends TimerTask{
             System.out.println("\tcohort id : " + cohortId);
         }
 
-        // write user's cohort info into infodb.usreGroupinfo "next generation cohort"
+        return generationIdObj;
+    }
+
+    private void updateUserNextCohortInfo() {
         System.out.print("Writing next generation cohort information to userGroupInfo ...");
+
         for (String userId : cohortPerUser.keySet()) {
             List<String> cohortIdList = cohortPerUser.get(userId);
 
@@ -565,26 +630,28 @@ public class CohortClusteringService extends TimerTask{
             userGroupInfoCol.update(query, setter);
         }
         System.out.println("done");
+    }
 
-        // write group current generation info
+    private void updateGroupCurrentGenId(ObjectId generationIdObj) {
         System.out.print("Writing current generation id into group : " + groupId + " ...");
         BasicDBObject query = new BasicDBObject(DBConstants.Groups.ID, new ObjectId(groupId));
         BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.Groups.CURRENT_GENERATION, generationIdObj));
         groupsCol.update(query, setter);
         System.out.println("done");
+    }
 
-        // notice, update userGroupInfo.CH after the first set of inboxes are generated by inboxer
-        if (OUTPUT_COHORT_INFO_FOR_TEST) {
-            System.out.print("Writing cohort information to userGroupInfo for testing...");
-            for (String userId : cohortPerUser.keySet()) {
-                List<String> cohortIdList = cohortPerUser.get(userId);
+    private void updateUserCohortInfo() {
+        System.out.print("Writing cohort information to userGroupInfo for testing...");
 
-                query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, userId).append(DBConstants.UserGroupInfo.GROUP_ID, groupId);
-                setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.UserGroupInfo.COHORT_LIST, convertIdList(cohortIdList)));
-                userGroupInfoCol.update(query, setter);
-            }
-            System.out.println("done");
+        for (String userId : cohortPerUser.keySet()) {
+            List<String> cohortIdList = cohortPerUser.get(userId);
+
+            BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, userId).append(DBConstants.UserGroupInfo.GROUP_ID, groupId);
+            BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.UserGroupInfo.COHORT_LIST, convertIdList(cohortIdList)));
+            userGroupInfoCol.update(query, setter);
         }
+
+        System.out.println("done");
     }
 
     private List<ObjectId> convertIdList(List<String> list) {
@@ -593,6 +660,41 @@ public class CohortClusteringService extends TimerTask{
             objlist.add(new ObjectId(strId));
         }
         return objlist;
+    }
+
+    private void produceStrengthTask() throws Exception {
+        initializeQueue();
+
+        System.out.print("Producing strength computation task...");
+
+        BasicDBObject task = new BasicDBObject();
+        task.put(AzureConstants.StrengthTask.TYPE, AzureConstants.StrengthTask.COMPUTE_ALL_STRENGTH);
+        task.put(AzureConstants.StrengthTask.GROUP_ID, groupId);
+
+        // enqueue
+        CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
+        strengthTaskQueue.addMessage(message);
+
+        System.out.println("done");
+    }
+
+    private void initializeQueue() throws Exception {
+        System.out.print("Initializing Azure Storage Queue service... ");
+
+        // Retrieve storage account from connection-string.
+        CloudStorageAccount storageAccount =
+                CloudStorageAccount.parse(AzureConstants.STORAGE_CONNECTION_STRING);
+
+        // Create the queue client.
+        queueClient = storageAccount.createCloudQueueClient();
+
+        // Retrieve a reference to a queue.
+        strengthTaskQueue = queueClient.getQueueReference(AzureConstants.STRENGTH_TASK_QUEUE);
+
+        // Create the queue if it doesn't already exist.
+        strengthTaskQueue.createIfNotExists();
+
+        System.out.println("done");
     }
 
     private void writeFakeBlahCohortStrength() {

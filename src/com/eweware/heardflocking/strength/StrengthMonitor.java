@@ -32,8 +32,8 @@ public class StrengthMonitor extends TimerTask {
 
     private HashMap<String, String> groupNames;
 
-    private static final int RUN_PERIOD_HOUR = 24;
-    private final int RELEVANT_BLAH_MONTH = 24;
+    private static final int RUN_PERIOD_HOURS = 24;
+    private final int RELEVANT_BLAH_MONTHS = 24;
 
 
     public static void main(String[] args) {
@@ -49,9 +49,9 @@ public class StrengthMonitor extends TimerTask {
         // set period
 
 
-        System.out.println("StrengthMonitor set to run once for every " + RUN_PERIOD_HOUR + " hours, starting at "  + cal.getTime().toString());
+        System.out.println("StrengthMonitor set to run once for every " + RUN_PERIOD_HOURS + " hours, starting at "  + cal.getTime().toString());
 
-        timer.schedule(new StrengthMonitor(), cal.getTime(), TimeUnit.HOURS.toMillis(RUN_PERIOD_HOUR));
+        timer.schedule(new StrengthMonitor(), cal.getTime(), TimeUnit.HOURS.toMillis(RUN_PERIOD_HOURS));
     }
 
     @Override
@@ -61,7 +61,7 @@ public class StrengthMonitor extends TimerTask {
             initializeMongoDB();
 
             scanBlahs();
-            //scanUsers();
+            scanUsers();
 
         }
         catch (Exception e) {
@@ -119,7 +119,7 @@ public class StrengthMonitor extends TimerTask {
         System.out.println("### Start scanning blahs...");
         // only look at blahs created within certain number of months
         Calendar cal = Calendar.getInstance();
-        cal.add(Calendar.MONTH, -RELEVANT_BLAH_MONTH);
+        cal.add(Calendar.MONTH, -RELEVANT_BLAH_MONTHS);
         Date earliestRelevantDate = cal.getTime();
 
         // get all relevant blah info
