@@ -20,9 +20,14 @@ import java.util.concurrent.TimeUnit;
  */
 public class StrengthMonitor extends TimerTask {
 
+    public StrengthMonitor(String server) {
+        DB_SERVER = server;
+    }
+
     private CloudQueueClient queueClient;
     private CloudQueue strengthTaskQueue;
 
+    private String DB_SERVER;
     private MongoClient mongoClient;
     private DB userDB;
     private DB infoDB;
@@ -36,9 +41,22 @@ public class StrengthMonitor extends TimerTask {
     private static final int RUN_PERIOD_HOURS = 24;
     private final int RELEVANT_BLAH_MONTHS = 24;
 
-    private final boolean TEST_ONLY_TECH = true;
+    private final boolean TEST_ONLY_TECH = false;
 
     public static void main(String[] args) {
+        // MongoDB server configuration
+        String server = DBConstants.DEV_DB_SERVER;
+        if (args.length > 0) {
+            if (args[0].equals("dev"))
+                server = DBConstants.DEV_DB_SERVER;
+            else if (args[0].equals("qa"))
+                server = DBConstants.QA_DB_SERVER;
+            else if (args[0].equals("prod"))
+                server = DBConstants.PROD_DB_SERVER;
+            else
+            {}
+        }
+
         Timer timer = new Timer();
         Calendar cal = Calendar.getInstance();
 
@@ -53,7 +71,7 @@ public class StrengthMonitor extends TimerTask {
 
         System.out.println("StrengthMonitor set to run once for every " + RUN_PERIOD_HOURS + " hours, starting at "  + cal.getTime().toString());
 
-        timer.schedule(new StrengthMonitor(), cal.getTime(), TimeUnit.HOURS.toMillis(RUN_PERIOD_HOURS));
+        timer.schedule(new StrengthMonitor(server), cal.getTime(), TimeUnit.HOURS.toMillis(RUN_PERIOD_HOURS));
     }
 
     @Override
@@ -93,7 +111,7 @@ public class StrengthMonitor extends TimerTask {
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection... ");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
+        mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
         infoDB = mongoClient.getDB("infodb");
 
@@ -132,9 +150,10 @@ public class StrengthMonitor extends TimerTask {
             BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.GROUP_ID, new ObjectId(groupId));
             query.put(DBConstants.BlahInfo.CREATE_TIME, new BasicDBObject("$gt", earliestRelevantDate));
             // "relevant" also means the "next check time" for the blah has passed
-            BasicDBObject or = new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date()));
-            or.append(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false));
-            query.put("$or", or);
+            List<BasicDBObject> orList = new ArrayList<>();
+            orList.add(new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date())));
+            orList.add(new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false)));
+            query.put("$or", orList);
             Cursor cursor = blahInfoCol.find(query);
 
             while (cursor.hasNext()) {
@@ -170,9 +189,10 @@ public class StrengthMonitor extends TimerTask {
         System.out.println("### Start scanning users...");
         // get user-group info
         // only scan user whose "next check time" as passed
-        BasicDBObject or = new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date()));
-        or.append(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false));
-        BasicDBObject query = new BasicDBObject("$or", or);
+        List<BasicDBObject> orList = new ArrayList<>();
+        orList.add(new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date())));
+        orList.add(new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false)));
+        BasicDBObject query = new BasicDBObject("$or", orList);
 
         Cursor cursor = userGroupInfoCol.find(query);
 
@@ -212,7 +232,7 @@ public class StrengthMonitor extends TimerTask {
         // determine next check time based on activity and last update time
         updateBlahNextCheckTime(stats);
 
-        int score = stats.opens + stats.comments * 5 + stats.upvotes * 10
+        long score = stats.opens + stats.comments * 5 + stats.upvotes * 10
                 + stats.downvotes * 10 + stats.commentUpvotes * 5 + stats.commentDownvotes * 5;
         if (score >= 20) {
             // re-compute strength
@@ -232,7 +252,7 @@ public class StrengthMonitor extends TimerTask {
         // determine next check time based on activity and last update time
         updateUserNextCheckTime(stats);
 
-        int score = stats.opens + stats.comments * 5 + stats.upvotes * 10
+        long score = stats.opens + stats.comments * 5 + stats.upvotes * 10
                 + stats.downvotes * 10 + stats.commentUpvotes * 5 + stats.commentDownvotes * 5;
         if (score >= 20) {
             // re-compute strength
@@ -249,25 +269,28 @@ public class StrengthMonitor extends TimerTask {
         String blahId;
         Date lastUpdate;
 
-        int views;
-        int opens;
-        int comments;
-        int upvotes;
-        int downvotes;
-        int commentUpvotes;
-        int commentDownvotes;
+        long views;
+        long opens;
+        long comments;
+        long upvotes;
+        long downvotes;
+        long commentUpvotes;
+        long commentDownvotes;
 
         private RecentBlahActivity(BasicDBObject blahInfo) {
             blahId = blahInfo.getString(DBConstants.BlahInfo.ID);
             lastUpdate = blahInfo.getDate(DBConstants.BlahInfo.STRENGTH_UPDATE_TIME, new Date(0L));
 
-            views = blahInfo.getInt(DBConstants.BlahInfo.NEW_VIEWS, 0);
-            opens = blahInfo.getInt(DBConstants.BlahInfo.NEW_OPENS, 0);
-            comments = blahInfo.getInt(DBConstants.BlahInfo.NEW_COMMENTS, 0);
-            upvotes= blahInfo.getInt(DBConstants.BlahInfo.NEW_UPVOTES, 0);
-            downvotes = blahInfo.getInt(DBConstants.BlahInfo.NEW_DOWNVOTES, 0);
-            commentUpvotes = blahInfo.getInt(DBConstants.BlahInfo.NEW_COMMENT_UPVOTES, 0);
-            commentDownvotes = blahInfo.getInt(DBConstants.BlahInfo.NEW_COMMENT_DOWNVOTES, 0);
+            BasicDBObject newActivity = (BasicDBObject) blahInfo.get(DBConstants.BlahInfo.NEW_ACTIVITY);
+            if (newActivity != null) {
+                views = newActivity.getInt(DBConstants.BlahInfo.NEW_VIEWS, 0);
+                opens = newActivity.getInt(DBConstants.BlahInfo.NEW_OPENS, 0);
+                comments = newActivity.getInt(DBConstants.BlahInfo.NEW_COMMENTS, 0);
+                upvotes = newActivity.getInt(DBConstants.BlahInfo.NEW_UPVOTES, 0);
+                downvotes = newActivity.getInt(DBConstants.BlahInfo.NEW_DOWNVOTES, 0);
+                commentUpvotes = newActivity.getInt(DBConstants.BlahInfo.NEW_COMMENT_UPVOTES, 0);
+                commentDownvotes = newActivity.getInt(DBConstants.BlahInfo.NEW_COMMENT_DOWNVOTES, 0);
+            }
         }
     }
 
@@ -276,26 +299,29 @@ public class StrengthMonitor extends TimerTask {
         String groupId;
         Date lastUpdate;
 
-        int views;
-        int opens;
-        int comments;
-        int upvotes;
-        int downvotes;
-        int commentUpvotes;
-        int commentDownvotes;
+        long views;
+        long opens;
+        long comments;
+        long upvotes;
+        long downvotes;
+        long commentUpvotes;
+        long commentDownvotes;
 
         private RecentUserActivity(BasicDBObject userGroupInfo) {
             userId = userGroupInfo.get(DBConstants.UserGroupInfo.USER_ID).toString();
             groupId = userGroupInfo.get(DBConstants.UserGroupInfo.GROUP_ID).toString();
             lastUpdate = userGroupInfo.getDate(DBConstants.UserGroupInfo.STRENGTH_UPDATE_TIME, new Date(0L));
 
-            views = userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_VIEWS, 0);
-            opens = userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_OPENS, 0);
-            comments = userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_COMMENTS, 0);
-            upvotes= userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_UPVOTES, 0);
-            downvotes = userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_DOWNVOTES, 0);
-            commentUpvotes = userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_COMMENT_UPVOTES, 0);
-            commentDownvotes = userGroupInfo.getInt(DBConstants.UserGroupInfo.NEW_COMMENT_DOWNVOTES, 0);
+            BasicDBObject newActivity = (BasicDBObject) userGroupInfo.get(DBConstants.UserGroupInfo.NEW_ACTIVITY);
+            if (newActivity != null) {
+                views = newActivity.getInt(DBConstants.UserGroupInfo.NEW_VIEWS, 0);
+                opens = newActivity.getInt(DBConstants.UserGroupInfo.NEW_OPENS, 0);
+                comments = newActivity.getInt(DBConstants.UserGroupInfo.NEW_COMMENTS, 0);
+                upvotes = newActivity.getInt(DBConstants.UserGroupInfo.NEW_UPVOTES, 0);
+                downvotes = newActivity.getInt(DBConstants.UserGroupInfo.NEW_DOWNVOTES, 0);
+                commentUpvotes = newActivity.getInt(DBConstants.UserGroupInfo.NEW_COMMENT_UPVOTES, 0);
+                commentDownvotes = newActivity.getInt(DBConstants.UserGroupInfo.NEW_COMMENT_DOWNVOTES, 0);
+            }
         }
     }
 
@@ -318,7 +344,7 @@ public class StrengthMonitor extends TimerTask {
         // update database
         Date nextCheckTimeDate = Date.from(nextCheckTime.atZone(ZoneId.systemDefault()).toInstant());
 
-        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, stats.blahId);
+        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, new ObjectId(stats.blahId));
         BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, nextCheckTimeDate));
 
         blahInfoCol.update(query, setter);
@@ -353,13 +379,14 @@ public class StrengthMonitor extends TimerTask {
         // there may be even newer activity when we are checking the recent activities of the blah
         // so subtract the stats in database by the amount in our check
         BasicDBObject values = new BasicDBObject();
-        if (stats.views > 0) values.put(DBConstants.BlahInfo.NEW_VIEWS, -stats.views);
-        if (stats.opens > 0) values.put(DBConstants.BlahInfo.NEW_OPENS, -stats.opens);
-        if (stats.comments > 0) values.put(DBConstants.BlahInfo.NEW_COMMENTS, -stats.comments);
-        if (stats.upvotes > 0) values.put(DBConstants.BlahInfo.NEW_UPVOTES, -stats.upvotes);
-        if (stats.downvotes > 0) values.put(DBConstants.BlahInfo.NEW_DOWNVOTES, -stats.downvotes);
-        if (stats.commentUpvotes > 0) values.put(DBConstants.BlahInfo.NEW_COMMENT_UPVOTES, -stats.commentUpvotes);
-        if (stats.commentDownvotes > 0) values.put(DBConstants.BlahInfo.NEW_COMMENT_DOWNVOTES, -stats.commentDownvotes);
+        String newActPrefix = DBConstants.BlahInfo.NEW_ACTIVITY+".";
+        if (stats.views > 0) values.put(newActPrefix+DBConstants.BlahInfo.NEW_VIEWS, -stats.views);
+        if (stats.opens > 0) values.put(newActPrefix+DBConstants.BlahInfo.NEW_OPENS, -stats.opens);
+        if (stats.comments > 0) values.put(newActPrefix+DBConstants.BlahInfo.NEW_COMMENTS, -stats.comments);
+        if (stats.upvotes > 0) values.put(newActPrefix+DBConstants.BlahInfo.NEW_UPVOTES, -stats.upvotes);
+        if (stats.downvotes > 0) values.put(newActPrefix+DBConstants.BlahInfo.NEW_DOWNVOTES, -stats.downvotes);
+        if (stats.commentUpvotes > 0) values.put(newActPrefix+DBConstants.BlahInfo.NEW_COMMENT_UPVOTES, -stats.commentUpvotes);
+        if (stats.commentDownvotes > 0) values.put(newActPrefix+DBConstants.BlahInfo.NEW_COMMENT_DOWNVOTES, -stats.commentDownvotes);
 
         BasicDBObject inc = new BasicDBObject("$inc", values);
         BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, new ObjectId(stats.blahId));
@@ -371,13 +398,14 @@ public class StrengthMonitor extends TimerTask {
         // there may be even newer activity when we are checking the recent activities of the user
         // so subtract the stats in database by the amount in our check
         BasicDBObject values = new BasicDBObject();
-        if (stats.views > 0) values.put(DBConstants.UserGroupInfo.NEW_VIEWS, -stats.views);
-        if (stats.opens > 0) values.put(DBConstants.UserGroupInfo.NEW_OPENS, -stats.opens);
-        if (stats.comments > 0) values.put(DBConstants.UserGroupInfo.NEW_COMMENTS, -stats.comments);
-        if (stats.upvotes > 0) values.put(DBConstants.UserGroupInfo.NEW_UPVOTES, -stats.upvotes);
-        if (stats.downvotes > 0) values.put(DBConstants.UserGroupInfo.NEW_DOWNVOTES, -stats.downvotes);
-        if (stats.commentUpvotes > 0) values.put(DBConstants.UserGroupInfo.NEW_COMMENT_UPVOTES, -stats.commentUpvotes);
-        if (stats.commentDownvotes > 0) values.put(DBConstants.UserGroupInfo.NEW_COMMENT_DOWNVOTES, -stats.commentDownvotes);
+        String newActPrefix = DBConstants.UserGroupInfo.NEW_ACTIVITY+".";
+        if (stats.views > 0) values.put(newActPrefix+DBConstants.UserGroupInfo.NEW_VIEWS, -stats.views);
+        if (stats.opens > 0) values.put(newActPrefix+DBConstants.UserGroupInfo.NEW_OPENS, -stats.opens);
+        if (stats.comments > 0) values.put(newActPrefix+DBConstants.UserGroupInfo.NEW_COMMENTS, -stats.comments);
+        if (stats.upvotes > 0) values.put(newActPrefix+DBConstants.UserGroupInfo.NEW_UPVOTES, -stats.upvotes);
+        if (stats.downvotes > 0) values.put(newActPrefix+DBConstants.UserGroupInfo.NEW_DOWNVOTES, -stats.downvotes);
+        if (stats.commentUpvotes > 0) values.put(newActPrefix+DBConstants.UserGroupInfo.NEW_COMMENT_UPVOTES, -stats.commentUpvotes);
+        if (stats.commentDownvotes > 0) values.put(newActPrefix+DBConstants.UserGroupInfo.NEW_COMMENT_DOWNVOTES, -stats.commentDownvotes);
 
         BasicDBObject inc = new BasicDBObject("$inc", values);
         BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(stats.userId));

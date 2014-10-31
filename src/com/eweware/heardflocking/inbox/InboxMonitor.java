@@ -18,10 +18,14 @@ import java.util.concurrent.TimeUnit;
  * Created by weihan on 10/28/14.
  */
 public class InboxMonitor extends TimerTask {
+    public InboxMonitor(String server) {
+        DB_SERVER = server;
+    }
 
     private CloudQueueClient queueClient;
     private CloudQueue inboxTaskQueue;
 
+    private String DB_SERVER;
     private MongoClient mongoClient;
     private DB userDB;
     private DB infoDB;
@@ -32,7 +36,22 @@ public class InboxMonitor extends TimerTask {
 
     private HashMap<String, String> groupNames;
 
+    private final boolean TEST_ONLY_TECH = false;
+
     public static void main(String[] args) {
+        // MongoDB server configuration
+        String server = DBConstants.DEV_DB_SERVER;
+        if (args.length > 0) {
+            if (args[0].equals("dev"))
+                server = DBConstants.DEV_DB_SERVER;
+            else if (args[0].equals("qa"))
+                server = DBConstants.QA_DB_SERVER;
+            else if (args[0].equals("prod"))
+                server = DBConstants.PROD_DB_SERVER;
+            else
+            {}
+        }
+
         Timer timer = new Timer();
         Calendar cal = Calendar.getInstance();
 
@@ -47,7 +66,7 @@ public class InboxMonitor extends TimerTask {
 
         System.out.println("InboxMonitor set to run once for every " + periodHours + " hours, starting at "  + cal.getTime().toString());
 
-        timer.schedule(new InboxMonitor(), cal.getTime(), TimeUnit.HOURS.toMillis(periodHours));
+        timer.schedule(new InboxMonitor(server), cal.getTime(), TimeUnit.HOURS.toMillis(periodHours));
     }
 
     @Override
@@ -84,7 +103,7 @@ public class InboxMonitor extends TimerTask {
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection... ");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
+        mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
         infoDB = mongoClient.getDB("infodb");
 
@@ -113,6 +132,8 @@ public class InboxMonitor extends TimerTask {
         while (cursor.hasNext()) {
             BasicDBObject group = (BasicDBObject) cursor.next();
             String groupId = group.getObjectId(DBConstants.Groups.ID).toString();
+
+            if (TEST_ONLY_TECH && !groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
 
             System.out.print("Checking group <" + groupId + "> ... ");
 

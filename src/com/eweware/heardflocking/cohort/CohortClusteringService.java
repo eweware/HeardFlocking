@@ -21,7 +21,24 @@ import java.util.concurrent.TimeUnit;
  */
 public class CohortClusteringService extends TimerTask{
 
+    public CohortClusteringService(String server) {
+        DB_SERVER = server;
+    }
+
     public static void main(String[] args) {
+        // MongoDB server configuration
+        String server = DBConstants.DEV_DB_SERVER;
+        if (args.length > 0) {
+            if (args[0].equals("dev"))
+                server = DBConstants.DEV_DB_SERVER;
+            else if (args[0].equals("qa"))
+                server = DBConstants.QA_DB_SERVER;
+            else if (args[0].equals("prod"))
+                server = DBConstants.PROD_DB_SERVER;
+            else
+            {}
+        }
+
         Timer timer = new Timer();
         Calendar cal = Calendar.getInstance();
 
@@ -32,11 +49,11 @@ public class CohortClusteringService extends TimerTask{
         cal.set(Calendar.MILLISECOND, 0);
 
         // set period
-        int periodHours = 24 * 3;
+        final int periodHours = 24;
 
         System.out.println("CohortClustering set to run once for every " + periodHours + " hours, starting at "  + cal.getTime().toString());
 
-        timer.schedule(new CohortClusteringService(), cal.getTime(), TimeUnit.HOURS.toMillis(periodHours));
+        timer.schedule(new CohortClusteringService(server), cal.getTime(), TimeUnit.HOURS.toMillis(periodHours));
     }
 
     private final boolean CLUSTERING_RESEARCH = false;
@@ -46,6 +63,8 @@ public class CohortClusteringService extends TimerTask{
     private final boolean OUTPUT_COHORT_INFO_FOR_TEST = false;
 
     // mongo server and databases
+    String DB_SERVER;
+
     MongoClient mongoClient;
     DB userDB;
     DB blahDB;
@@ -106,7 +125,7 @@ public class CohortClusteringService extends TimerTask{
     private CloudQueueClient queueClient;
     private CloudQueue strengthTaskQueue;
 
-    private final boolean TEST_ONLY_TECH = true;
+    private final boolean TEST_ONLY_TECH = false;
 
     @Override
     public void run() {
@@ -199,7 +218,7 @@ public class CohortClusteringService extends TimerTask{
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection...");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
+        mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
 
         userDB = mongoClient.getDB("userdb");
         blahDB = mongoClient.getDB("blahdb");
@@ -595,8 +614,9 @@ public class CohortClusteringService extends TimerTask{
 
             BasicDBObject cohortInfo = new BasicDBObject();
             cohortInfo.put(DBConstants.CohortInfo.ID, new ObjectId(cohortId));
-            cohortInfo.put(DBConstants.CohortInfo.NUM_USERS, userIdList.size());
-            cohortInfo.put(DBConstants.CohortInfo.USER_LIST, convertIdList(userIdList));
+            cohortInfo.put(DBConstants.CohortInfo.NUM_USERS, (long)userIdList.size());
+            // we could add user list for each cohort, but it this necessary?
+//            cohortInfo.put(DBConstants.CohortInfo.USER_LIST, convertIdList(userIdList));
 
             cohortInfoCol.insert(cohortInfo);
         }

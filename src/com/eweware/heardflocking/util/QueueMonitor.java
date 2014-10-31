@@ -1,14 +1,10 @@
-package com.eweware.heardflocking;
+package com.eweware.heardflocking.util;
 
+import com.eweware.heardflocking.AzureConstants;
 import com.microsoft.azure.storage.CloudStorageAccount;
-import com.microsoft.azure.storage.OperationContext;
 import com.microsoft.azure.storage.queue.CloudQueue;
 import com.microsoft.azure.storage.queue.CloudQueueClient;
-import com.microsoft.azure.storage.queue.CloudQueueMessage;
-import com.mongodb.BasicDBObject;
-import com.mongodb.util.JSON;
 
-import java.nio.file.ClosedDirectoryStreamException;
 import java.util.Date;
 
 /**

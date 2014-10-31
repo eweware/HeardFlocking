@@ -22,11 +22,15 @@ import java.util.*;
  * Created by weihan on 10/23/14.
  */
 public class StrengthTaskWorker {
+    public StrengthTaskWorker(String server) {
+        DB_SERVER = server;
+    }
 
     private CloudQueueClient queueClient;
     private CloudQueue strengthTaskQueue;
     private CloudQueue inboxTaskQueue;
 
+    private String DB_SERVER;
     private MongoClient mongoClient;
     private DB userDB;
     private DB infoDB;
@@ -54,7 +58,20 @@ public class StrengthTaskWorker {
     double wP = 10.0;
 
     public static void main(String[] args) {
-        new StrengthTaskWorker().execute();
+        // MongoDB server configuration
+        String server = DBConstants.DEV_DB_SERVER;
+        if (args.length > 0) {
+            if (args[0].equals("dev"))
+                server = DBConstants.DEV_DB_SERVER;
+            else if (args[0].equals("qa"))
+                server = DBConstants.QA_DB_SERVER;
+            else if (args[0].equals("prod"))
+                server = DBConstants.PROD_DB_SERVER;
+            else
+            {}
+        }
+
+        new StrengthTaskWorker(server).execute();
     }
 
     private void execute() {
@@ -124,7 +141,7 @@ public class StrengthTaskWorker {
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection... ");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
+        mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
         infoDB = mongoClient.getDB("infodb");
         statsDB = mongoClient.getDB("statsdb");
@@ -485,12 +502,17 @@ public class StrengthTaskWorker {
         // take average
         for (String cohortId : blahStrengthInCohort.keySet()) {
             HashMap<String, Double> blahStrength = blahStrengthInCohort.get(cohortId);
-            double avg = 0;
-            for (String blahId : blahStrength.keySet()) {
-                avg += blahStrength.get(blahId);
+            if (blahStrength.size() == 0){
+                userCohortStrength.put(cohortId, 0.0);
             }
-            avg /= blahStrength.size();
-            userCohortStrength.put(cohortId, avg);
+                else {
+                double avg = 0;
+                for (String blahId : blahStrength.keySet()) {
+                    avg += blahStrength.get(blahId);
+                }
+                avg /= blahStrength.size();
+                userCohortStrength.put(cohortId, avg);
+            }
         }
         return userCohortStrength;
     }

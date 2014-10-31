@@ -1,5 +1,6 @@
-package com.eweware.heardflocking;
+package com.eweware.heardflocking.util;
 
+import com.eweware.heardflocking.DBConstants;
 import com.mongodb.*;
 import org.bson.types.ObjectId;
 
@@ -10,10 +11,28 @@ import java.util.*;
  * Created by weihan on 10/24/14.
  */
 public class TransferInfoData {
-    public static void main(String[] args) {
-        new TransferInfoData().execute();
+    public TransferInfoData(String server) {
+        DB_SERVER = server;
     }
 
+    public static void main(String[] args) {
+        // MongoDB server configuration
+        String server = DBConstants.DEV_DB_SERVER;
+        if (args.length > 0) {
+            if (args[0].equals("dev"))
+                server = DBConstants.DEV_DB_SERVER;
+            else if (args[0].equals("qa"))
+                server = DBConstants.QA_DB_SERVER;
+            else if (args[0].equals("prod"))
+                server = DBConstants.PROD_DB_SERVER;
+            else
+            {}
+        }
+
+        new TransferInfoData(server).execute();
+    }
+
+    private String DB_SERVER;
     private MongoClient mongoClient;
     private DB userDB;
     private DB infoDB;
@@ -35,7 +54,7 @@ public class TransferInfoData {
 
     private HashMap<String, String> groupNames;
 
-    private final boolean TEST_ONLY_TECH = true;
+    private final boolean TEST_ONLY_TECH = false;
 
     private void execute() {
         try {
@@ -57,7 +76,7 @@ public class TransferInfoData {
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection...");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
+        mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
         infoDB = mongoClient.getDB("infodb");
         blahDB = mongoClient.getDB("blahdb");

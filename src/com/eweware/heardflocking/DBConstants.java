@@ -19,13 +19,13 @@ public interface DBConstants {
         public static final String STRENGTH = "S";
 
         public static final String NEW_ACTIVITY = "N";
-        public static final String NEW_VIEWS = "N.V";
-        public static final String NEW_OPENS = "N.O";
-        public static final String NEW_COMMENTS = "N.C";
-        public static final String NEW_UPVOTES = "N.U";
-        public static final String NEW_DOWNVOTES = "N.D";
-        public static final String NEW_COMMENT_UPVOTES = "N.CU";
-        public static final String NEW_COMMENT_DOWNVOTES = "N.CD";
+        public static final String NEW_VIEWS = "V";
+        public static final String NEW_OPENS = "O";
+        public static final String NEW_COMMENTS = "C";
+        public static final String NEW_UPVOTES = "U";
+        public static final String NEW_DOWNVOTES = "D";
+        public static final String NEW_COMMENT_UPVOTES = "CU";
+        public static final String NEW_COMMENT_DOWNVOTES = "CD";
 
         public static final String NEXT_CHECK_TIME = "k";
 
@@ -46,13 +46,13 @@ public interface DBConstants {
         public static final String STRENGTH = "S";
 
         public static final String NEW_ACTIVITY = "N";
-        public static final String NEW_VIEWS = "N.V";
-        public static final String NEW_OPENS = "N.O";
-        public static final String NEW_COMMENTS = "N.C";
-        public static final String NEW_UPVOTES = "N.U";
-        public static final String NEW_DOWNVOTES = "N.D";
-        public static final String NEW_COMMENT_UPVOTES = "N.CU";
-        public static final String NEW_COMMENT_DOWNVOTES = "N.CD";
+        public static final String NEW_VIEWS = "V";
+        public static final String NEW_OPENS = "O";
+        public static final String NEW_COMMENTS = "C";
+        public static final String NEW_UPVOTES = "U";
+        public static final String NEW_DOWNVOTES = "D";
+        public static final String NEW_COMMENT_UPVOTES = "CU";
+        public static final String NEW_COMMENT_DOWNVOTES = "CD";
 
         public static final String NEXT_CHECK_TIME = "k";
     }
