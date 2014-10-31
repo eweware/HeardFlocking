@@ -36,6 +36,7 @@ public class StrengthMonitor extends TimerTask {
     private static final int RUN_PERIOD_HOURS = 24;
     private final int RELEVANT_BLAH_MONTHS = 24;
 
+    private final boolean TEST_ONLY_TECH = true;
 
     public static void main(String[] args) {
         Timer timer = new Timer();
@@ -92,7 +93,7 @@ public class StrengthMonitor extends TimerTask {
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection... ");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DEV_DB_SERVER_PORT);
+        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
         infoDB = mongoClient.getDB("infodb");
 
@@ -123,41 +124,45 @@ public class StrengthMonitor extends TimerTask {
         cal.add(Calendar.MONTH, -RELEVANT_BLAH_MONTHS);
         Date earliestRelevantDate = cal.getTime();
 
-        // get all relevant blah info
-        BasicDBObject query = new BasicDBObject();
-        query.put(DBConstants.BlahInfo.CREATE_TIME, new BasicDBObject("$gt", earliestRelevantDate));
-        // "relevant" also means the "next check time" for the blah has passed
-        BasicDBObject or = new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date()));
-        or.append(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false));
-        query.put("$or", or);
-        Cursor cursor = blahInfoCol.find(query);
+        // scan by group
+        for (String groupId : groupNames.keySet()) {
+            if (TEST_ONLY_TECH && !groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
 
-        while (cursor.hasNext()) {
-            BasicDBObject blahInfo = (BasicDBObject) cursor.next();
-            String blahId = blahInfo.getString(DBConstants.BlahInfo.ID);
+            // get all relevant blah info in this group
+            BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.GROUP_ID, new ObjectId(groupId));
+            query.put(DBConstants.BlahInfo.CREATE_TIME, new BasicDBObject("$gt", earliestRelevantDate));
+            // "relevant" also means the "next check time" for the blah has passed
+            BasicDBObject or = new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date()));
+            or.append(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false));
+            query.put("$or", or);
+            Cursor cursor = blahInfoCol.find(query);
 
-            System.out.print("Checking blah <" + blahId + "> ... ");
+            while (cursor.hasNext()) {
+                BasicDBObject blahInfo = (BasicDBObject) cursor.next();
+                String blahId = blahInfo.getString(DBConstants.BlahInfo.ID);
 
-            if (blahIsActive(blahInfo)) {
-                System.out.print("active, producing task... ");
-                String groupId = blahInfo.get(DBConstants.BlahInfo.GROUP_ID).toString();
+                System.out.print("Checking blah <" + blahId + "> ... ");
 
-                // produce re-compute strength task
-                BasicDBObject task = new BasicDBObject();
-                task.put(AzureConstants.StrengthTask.TYPE, AzureConstants.StrengthTask.COMPUTE_BLAH_STRENGTH);
-                task.put(AzureConstants.StrengthTask.BLAH_ID, blahId);
-                task.put(AzureConstants.StrengthTask.GROUP_ID, groupId);
+                if (blahIsActive(blahInfo)) {
+                    System.out.print("active, producing task... ");
 
-                // enqueue
-                CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
-                strengthTaskQueue.addMessage(message);
-                System.out.println("done");
+                    // produce re-compute strength task
+                    BasicDBObject task = new BasicDBObject();
+                    task.put(AzureConstants.StrengthTask.TYPE, AzureConstants.StrengthTask.COMPUTE_BLAH_STRENGTH);
+                    task.put(AzureConstants.StrengthTask.BLAH_ID, blahId);
+                    task.put(AzureConstants.StrengthTask.GROUP_ID, groupId);
+
+                    // enqueue
+                    CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
+                    strengthTaskQueue.addMessage(message);
+                    System.out.println("done");
+                } else {
+                    System.out.println("inactive, passed");
+                }
             }
-            else {
-                System.out.println("inactive, passed");
-            }
+            cursor.close();
         }
-        cursor.close();
+
         System.out.println("### Finish blah scanning.\n");
     }
 

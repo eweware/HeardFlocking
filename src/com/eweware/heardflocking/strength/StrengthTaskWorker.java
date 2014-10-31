@@ -2,6 +2,7 @@ package com.eweware.heardflocking.strength;
 
 
 import Jama.Matrix;
+import Jama.util.Maths;
 import com.eweware.heardflocking.AzureConstants;
 import com.eweware.heardflocking.DBConstants;
 import com.microsoft.azure.storage.CloudStorageAccount;
@@ -11,7 +12,6 @@ import com.microsoft.azure.storage.queue.CloudQueue;
 import com.microsoft.azure.storage.queue.CloudQueueClient;
 import com.microsoft.azure.storage.queue.CloudQueueMessage;
 import com.mongodb.*;
-import com.mongodb.util.Hash;
 import com.mongodb.util.JSON;
 import org.bson.types.ObjectId;
 
@@ -124,7 +124,7 @@ public class StrengthTaskWorker {
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection... ");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DEV_DB_SERVER_PORT);
+        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
         infoDB = mongoClient.getDB("infodb");
         statsDB = mongoClient.getDB("statsdb");
@@ -135,7 +135,7 @@ public class StrengthTaskWorker {
         cohortInfoCol = infoDB.getCollection("cohortInfo");
         generationInfoCol = infoDB.getCollection("generationInfo");
         userGroupInfoCol = infoDB.getCollection("userGroupInfo");
-        userBlahStatsCol = statsDB.getCollection("userBlahInfo");
+        userBlahStatsCol = statsDB.getCollection("userblahstats");
 
         System.out.println("done");
     }
@@ -146,13 +146,13 @@ public class StrengthTaskWorker {
         if (taskType == AzureConstants.StrengthTask.COMPUTE_BLAH_STRENGTH) {
             String blahId = (String) task.get(AzureConstants.StrengthTask.BLAH_ID);
             String groupId = (String) task.get(AzureConstants.StrengthTask.GROUP_ID);
-            HashMap<String, Double> cohortStrength = computeBlahStrength(blahId, groupId);
+            HashMap<String, Double> cohortStrength = computeBlahStrength(blahId, groupId, false);
             updateBlahStrength(blahId, cohortStrength);
         }
         else if (taskType == AzureConstants.StrengthTask.COMPUTE_USER_STRENGTH) {
             String userId = (String) task.get(AzureConstants.StrengthTask.USER_ID);
             String groupId = (String) task.get(AzureConstants.StrengthTask.GROUP_ID);
-            HashMap<String, Double> cohortStrength = computeUserStrength(userId, groupId);
+            HashMap<String, Double> cohortStrength = computeUserStrength(userId, groupId, false);
             updateUserStrength(userId, groupId, cohortStrength);
         }
         else if (taskType == AzureConstants.StrengthTask.COMPUTE_ALL_STRENGTH) {
@@ -176,97 +176,85 @@ public class StrengthTaskWorker {
         }
     }
 
-    private HashMap<String, Double> computeBlahStrength(String blahId, String groupId) throws TaskException {
+    private HashMap<String, Double> computeBlahStrength(String blahId, String groupId, boolean nextGen) throws TaskException {
         System.out.print("Compute strength blah id : " + blahId + " ...");
-        // get user-blah util vector for this blah
-        // aggregate each user's activities for this blah
-        BasicDBObject match = new BasicDBObject("$match", new BasicDBObject(DBConstants.UserBlahStats.BLAH_ID, new ObjectId(blahId)));
 
-        BasicDBObject groupFields = new BasicDBObject(DBConstants.UserBlahStats.USER_ID, DBConstants.UserBlahStats.USER_ID);
-        groupFields.append(DBConstants.UserBlahStats.VIEWS, new BasicDBObject("$sum", DBConstants.UserBlahStats.VIEWS));
-        groupFields.append(DBConstants.UserBlahStats.OPENS, new BasicDBObject("$sum", DBConstants.UserBlahStats.OPENS));
-        groupFields.append(DBConstants.UserBlahStats.COMMENTS, new BasicDBObject("$sum", DBConstants.UserBlahStats.COMMENTS));
-        groupFields.append(DBConstants.UserBlahStats.PROMOTION, new BasicDBObject("$sum", DBConstants.UserBlahStats.PROMOTION));
-        BasicDBObject groupBy = new BasicDBObject("$group", groupFields);
+        // if compute strength for current generation
+        // get current generation id for this blah's group, otherwise get next generation id
+        String generationId = getGenerationId(groupId, nextGen);
 
-        List<DBObject> pipeline = Arrays.asList(match, groupBy);
-        AggregationOutput output = userBlahStatsCol.aggregate(pipeline);
-
-        // if the blah doesn't have any activity, return
-        Iterator<DBObject> it = output.results().iterator();
-        if (!it.hasNext()) throw new TaskException("Error : no user-blah stats for blah : " + blahId, TaskExceptionType.SKIP);
-
-        // the aggregation is grouped by userId, for each user, compute utility and store
-        List<String> userIdList = new ArrayList<>();
-        ArrayList<Double> userUtilList = new ArrayList<>();
-        for (DBObject userBlah : output.results()) {
-            UserBlahInfo userBlahInfo = new UserBlahInfo(userBlah);
-
-            userIdList.add(userBlahInfo.userId);
-
-            userUtilList.add(computeUtility(userBlahInfo));
-        }
-
-        // convert to double[]
-        double[] userUtilVec = new double[userUtilList.size()];
-        for (int i = 0; i < userUtilList.size(); i++)
-            userUtilVec[i] = userUtilList.get(i);
-
-        // get current generation id for this blah's group
-        BasicDBObject query = new BasicDBObject(DBConstants.Groups.ID, new ObjectId(groupId));
-        BasicDBObject group = (BasicDBObject) groupsCol.findOne(query);
-        if (group == null) throw new TaskException("Error : group not found for ID : " + groupId, TaskExceptionType.SKIP);
-
-        String generationId = group.getString(DBConstants.Groups.CURRENT_GENERATION);
-
-        // get cohort list for this generation
-        HashMap<String, Integer> cohortIdIndexMap = new HashMap<>();
-        query = new BasicDBObject(DBConstants.GenerationInfo.ID, new ObjectId(generationId));
-        BasicDBObject generationInfo = (BasicDBObject) generationInfoCol.findOne(query);
-        if (group == null) throw new TaskException("Error : generation not found for ID : " + generationId, TaskExceptionType.SKIP);
-
-        BasicDBObject cohortInboxInfo = (BasicDBObject) generationInfo.get(DBConstants.GenerationInfo.COHORT_INFO);
+        // get cohort info for this generation
+        BasicDBObject cohortInboxInfo = getCohortInfo(generationId);
 
         // build cohortId -> index map
+        HashMap<String, Integer> cohortIdIndexMap = new HashMap<>();
         int c = 0;
         for (String cohortId : cohortInboxInfo.keySet())
             cohortIdIndexMap.put(cohortId, c++);
 
-        // get user cohort cluter info
-        // matrix[userIndex][cohortIndex] = 1 when the user is in the cohort, = 0 otherwise
-        double[][] userCohortMtx = new double[userIdList.size()][cohortIdIndexMap.size()];
+        // get user-blah util vector for this blah
+        AggregationOutput output = blahAggregation(blahId);
 
-        for (int u = 0; u < userIdList.size(); u++) {
-            String userId = userIdList.get(u);
-            query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(userId));
-            query.put(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
+        // declare final cohort-strength result in vector form
+        double[] cohortStrengthVec;
 
-            BasicDBObject userGroupInfo = (BasicDBObject) userGroupInfoCol.findOne(query);
-
-            if (userGroupInfo == null) {
-                throw new TaskException("Error : user-group info not found for userID : " + userId + " groupId : " + groupId, TaskExceptionType.SKIP);
-            }
+        // if the blah doesn't have any activity
+        //   if this is for next generation, return cohort strength with all 0.0
+        //   else skip this task
+        Iterator<DBObject> it = output.results().iterator();
+        if (!it.hasNext()) {
+            if (!nextGen) throw new TaskException("Error : no user-blah stats for blah : " + blahId, TaskExceptionType.SKIP);
             else {
-                List<String> userCohortIdList = (List<String>) userGroupInfo.get(DBConstants.UserGroupInfo.COHORT_LIST);
-                for (String cohortId : userCohortIdList) {
-                    userCohortMtx[u][cohortIdIndexMap.get(cohortId)] = 1;
+                cohortStrengthVec = new double[cohortIdIndexMap.size()];
+            }
+        }
+        else {
+            // the aggregation is grouped by userId, for each user, compute utility and store
+            // add userId and corresponding utility to two corresponding lists
+            List<String> userIdList = new ArrayList<>();
+            ArrayList<Double> userUtilList = new ArrayList<>();
+            for (DBObject userBlahAggregation : output.results()) {
+                UserBlahInfo userBlahInfo = new UserBlahInfo(userBlahAggregation, blahId);
+                userIdList.add(userBlahInfo.userId.toString());
+                userUtilList.add(computeUtility(userBlahInfo));
+            }
+
+            // get user cohort cluster info
+            // matrix[userIndex][cohortIndex] = 1 when the user is in the cohort, = 0 otherwise
+            // there is data inconsistency between userBlahStats and userGroupInfo, delete those rows
+            HashSet<Integer> deleteRow = new HashSet<>();
+            double[][] userCohortMtx = getUserCohortInfo(userIdList, cohortIdIndexMap, groupId, nextGen, deleteRow);
+
+            // exclude rows affected by inconsistent data
+            double[][] userCohortMtxValid;
+            if (deleteRow.size() > 0) {
+                userCohortMtxValid = new double[userIdList.size() - deleteRow.size()][cohortIdIndexMap.size()];
+                int j = 0;
+                for (int i = 0; i < userIdList.size(); i++) {
+                    if (!deleteRow.contains(i)) {
+                        userCohortMtxValid[j] = userCohortMtx[i];
+                        j++;
+                    }
                 }
             }
-        }
+            else
+                userCohortMtxValid = userCohortMtx;
 
-        // use userCohortMtx and userUtilVec to compute cohortStrengthVec
-        Matrix A = new Matrix(userCohortMtx);
-        Matrix b = new Matrix(userUtilVec, userUtilVec.length);
-        // non-negative least squares, based on JAMA
-        Matrix x;
-        try {
-            x = NNLSSolver.solveNNLS(A, b);
-        }
-        catch (RuntimeException e) {
-            throw new TaskException("Numeric computation error : " + e.getMessage(), TaskExceptionType.SKIP);
-        }
-        double[] cohortStrengthVec = x.getColumnPackedCopy();
+            // convert userUtilList to double[]
+            // exclude rows affected by inconsistent data
+            double[] userUtilVec = new double[userUtilList.size() - deleteRow.size()];
+            int j = 0;
+            for (int i = 0; i < userUtilList.size(); i++) {
+                if (!deleteRow.contains(i)) {
+                    userUtilVec[j] = userUtilList.get(i);
+                    j++;
+                }
+            }
 
+            // use userCohortMtx and userUtilVec to compute cohortStrengthVec
+            cohortStrengthVec = nonNegativeLeastSquares(userCohortMtxValid, userUtilVec);
+
+        }
         // build cohortIdStrengthMap
         HashMap<String, Double> cohortStrength = new HashMap<>();
         for (String cohortId : cohortIdIndexMap.keySet()) {
@@ -278,19 +266,33 @@ public class StrengthTaskWorker {
         return cohortStrength;
     }
 
+    private AggregationOutput blahAggregation(String blahId) {
+        // aggregate each user's activities for this blah
+        BasicDBObject match = new BasicDBObject("$match", new BasicDBObject(DBConstants.UserBlahStats.BLAH_ID, new ObjectId(blahId)));
+
+        BasicDBObject groupFields = new BasicDBObject("_id", "$"+DBConstants.UserBlahStats.USER_ID);
+        groupFields.append(DBConstants.UserBlahStats.VIEWS, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.VIEWS));
+        groupFields.append(DBConstants.UserBlahStats.OPENS, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.OPENS));
+        groupFields.append(DBConstants.UserBlahStats.COMMENTS, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.COMMENTS));
+        groupFields.append(DBConstants.UserBlahStats.PROMOTION, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.PROMOTION));
+        BasicDBObject groupBy = new BasicDBObject("$group", groupFields);
+
+        List<DBObject> pipeline = Arrays.asList(match, groupBy);
+        return userBlahStatsCol.aggregate(pipeline);
+    }
 
     private class UserBlahInfo {
-        String blahId;
-        String userId;
+        ObjectId blahId;
+        ObjectId userId;
 
         int views;
         int opens;
         int comments;
         int promotion;
 
-        private UserBlahInfo(DBObject userBlah) {
-            userId = userBlah.get(DBConstants.UserBlahStats.USER_ID).toString();
-            blahId = userBlah.get(DBConstants.UserBlahStats.BLAH_ID).toString();
+        private UserBlahInfo(DBObject userBlah, String blahId) {
+            userId = (ObjectId) userBlah.get("_id");
+            this.blahId = new ObjectId(blahId);
 
             Integer obj;
             obj = (Integer) userBlah.get(DBConstants.UserBlahStats.VIEWS);
@@ -302,6 +304,23 @@ public class StrengthTaskWorker {
             obj = (Integer) userBlah.get(DBConstants.UserBlahStats.PROMOTION);
             promotion = obj == null ? 0 : obj;
         }
+    }
+
+    private String getGenerationId(String groupId, boolean nextGen) throws TaskException {
+        BasicDBObject query = new BasicDBObject(DBConstants.Groups.ID, new ObjectId(groupId));
+        BasicDBObject group = (BasicDBObject) groupsCol.findOne(query);
+        if (group == null) throw new TaskException("Error : group not found for ID : " + groupId, TaskExceptionType.SKIP);
+        if (nextGen)
+            return group.getString(DBConstants.Groups.NEXT_GENERATION);
+        else
+            return group.getString(DBConstants.Groups.CURRENT_GENERATION);
+    }
+
+    private BasicDBObject getCohortInfo(String generationId) throws TaskException {
+        BasicDBObject query = new BasicDBObject(DBConstants.GenerationInfo.ID, new ObjectId(generationId));
+        BasicDBObject generationInfo = (BasicDBObject) generationInfoCol.findOne(query);
+        if (generationInfo == null) throw new TaskException("Error : generation info not found for ID : " + generationId, TaskExceptionType.SKIP);
+        return (BasicDBObject) generationInfo.get(DBConstants.GenerationInfo.COHORT_INFO);
     }
 
     private double computeUtility(UserBlahInfo userBlahInfo) {
@@ -316,43 +335,95 @@ public class StrengthTaskWorker {
         return util;
     }
 
+    private double[][] getUserCohortInfo(List<String> userIdList, HashMap<String, Integer> cohortIdIndexMap, String groupId, boolean nextGen, HashSet<Integer> deleteRow) throws TaskException {
+
+        double[][] userCohortMtx = new double[userIdList.size()][cohortIdIndexMap.size()];
+
+        for (int u = 0; u < userIdList.size(); u++) {
+            String userId = userIdList.get(u);
+            BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(userId));
+            query.put(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
+
+            BasicDBObject userGroupInfo = (BasicDBObject) userGroupInfoCol.findOne(query);
+
+            if (userGroupInfo == null) {
+                // this happens because there are users who act on this group's blah but is not in that group
+                // data inconsistent!
+                deleteRow.add(u);
+//                throw new TaskException("Error : user-group info not found for userID : " + userId + " groupId : " + groupId, TaskExceptionType.SKIP);
+            }
+            else {
+                List<ObjectId> userCohortIdObjList;
+                if (nextGen) {
+                    userCohortIdObjList = (List<ObjectId>) userGroupInfo.get(DBConstants.UserGroupInfo.NEXT_COHORT_LIST);
+                }
+                else {
+                    userCohortIdObjList = (List<ObjectId>) userGroupInfo.get(DBConstants.UserGroupInfo.CURRENT_COHORT_LIST);
+                }
+                for (ObjectId cohortId : userCohortIdObjList) {
+                    userCohortMtx[u][cohortIdIndexMap.get(cohortId.toString())] = 1;
+                }
+            }
+        }
+        return userCohortMtx;
+    }
+
+    private double[] nonNegativeLeastSquares(double[][] userCohortMtx, double[] userUtilVec) throws TaskException {
+        Matrix A = new Matrix(userCohortMtx);
+        Matrix b = new Matrix(userUtilVec, userUtilVec.length);
+        // non-negative least squares, based on JAMA
+        Matrix x;
+        try {
+            x = NNLSSolver.solveNNLS(A, b);
+        }
+        catch (RuntimeException e) {
+            throw new TaskException("Numeric computation error : " + e.getMessage(), TaskExceptionType.SKIP);
+        }
+        return x.getColumnPackedCopy();
+    }
+
     private void updateBlahStrength(String blahId, HashMap<String, Double> cohortStrength) {
-        System.out.print(" and update database...");
+        System.out.print(", and update database...");
         BasicDBObject values = new BasicDBObject();
         for (String cohortId : cohortStrength.keySet()) {
             values.put(DBConstants.BlahInfo.STRENGTH + "." + cohortId, cohortStrength.get(cohortId));
         }
         values.put(DBConstants.BlahInfo.STRENGTH_UPDATE_TIME, new Date());
 
-        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, blahId);
+        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.ID, new ObjectId(blahId));
         BasicDBObject setter = new BasicDBObject("$set", values);
         blahInfoCol.update(query, setter);
         System.out.println("done");
     }
 
-    private HashMap<String, Double> computeUserStrength(String userId, String groupId) {
-        System.out.print("Compute strength user id : " + userId + " in group id : " + groupId + " ...");
+    private HashMap<String, Double> computeUserStrength(String userId, String groupId, boolean nextGen) {
+        System.out.print("Compute strength user id : " + userId + " ...");
 
-        // get cohort list for this group
-        List<String> cohortIdList = getCohortIdList(groupId);
+        // get cohort list for this group for current generation or next generation
+        List<String> cohortIdList = getCohortIdList(groupId, nextGen);
 
         // for all recent blahs authored by this user, get the blahs' cohort strength info
         // cohortId -> (blahId -> strength)
         HashMap<String, HashMap<String, Double>> blahStrengthInCohort = getBlahStrengthInCohort(userId, groupId, cohortIdList);
 
         // compute user's cohort-strength
-        HashMap<String, Double> userCohortStrength = computeCohortStrength(blahStrengthInCohort);
+        HashMap<String, Double> userCohortStrength = computeAvgBlahStrengthForAllCohort(blahStrengthInCohort);
 
         System.out.print("done");
         return userCohortStrength;
     }
 
-    private List<String> getCohortIdList(String groupId) {
-        // get this group's current generationId
+    private List<String> getCohortIdList(String groupId, boolean nextGen) {
+        // get group info
         BasicDBObject query = new BasicDBObject();
-        query.put(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
+        query.put(DBConstants.Groups.ID, new ObjectId(groupId));
         BasicDBObject group = (BasicDBObject) groupsCol.findOne(query);
-        ObjectId generationIdObj = group.getObjectId(DBConstants.Groups.CURRENT_GENERATION);
+        // get this group's current generationId or next generationId
+        ObjectId generationIdObj;
+        if (nextGen)
+            generationIdObj = group.getObjectId(DBConstants.Groups.NEXT_GENERATION);
+        else
+            generationIdObj = group.getObjectId(DBConstants.Groups.CURRENT_GENERATION);
 
         // get this generation's cohort list
         query = new BasicDBObject(DBConstants.GenerationInfo.ID, generationIdObj);
@@ -370,6 +441,7 @@ public class StrengthTaskWorker {
     private HashMap<String, HashMap<String, Double>> getBlahStrengthInCohort(String userId, String groupId, List<String> cohortIdList) {
         HashMap<String, HashMap<String, Double>> blahStrengthInCohort = new HashMap<>();
         // initialize
+        // notice here only have cohortId for this generation
         for (String cohortId : cohortIdList)
             blahStrengthInCohort.put(cohortId, new HashMap<>());
 
@@ -387,13 +459,20 @@ public class StrengthTaskWorker {
         Cursor cursor = blahInfoCol.find(query);
 
         // get blahs cohort-strength
+        // notice here also have cohort from previous generations
         while (cursor.hasNext()) {
             BasicDBObject blahInfo = (BasicDBObject) cursor.next();
             String blahId = blahInfo.getObjectId(DBConstants.BlahInfo.ID).toString();
             BasicDBObject strength = (BasicDBObject) blahInfo.get(DBConstants.BlahInfo.STRENGTH);
 
+            if (strength == null) {
+                // some blah didn't get initial strength
+                System.out.println("weird!");
+            }
             for (String cohortId : strength.keySet()) {
-                blahStrengthInCohort.get(cohortId).put(blahId, strength.getDouble(cohortId));
+                // only add cohort-strength for this generation
+                if (cohortIdList.contains(cohortId))
+                    blahStrengthInCohort.get(cohortId).put(blahId, strength.getDouble(cohortId));
             }
         }
         cursor.close();
@@ -401,7 +480,7 @@ public class StrengthTaskWorker {
         return blahStrengthInCohort;
     }
 
-    private HashMap<String, Double> computeCohortStrength(HashMap<String, HashMap<String, Double>> blahStrengthInCohort) {
+    private HashMap<String, Double> computeAvgBlahStrengthForAllCohort(HashMap<String, HashMap<String, Double>> blahStrengthInCohort) {
         HashMap<String, Double> userCohortStrength = new HashMap<>();
         // take average
         for (String cohortId : blahStrengthInCohort.keySet()) {
@@ -428,31 +507,52 @@ public class StrengthTaskWorker {
         BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(userId));
         query.put(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
         BasicDBObject setter = new BasicDBObject("$set", values);
-        blahInfoCol.update(query, setter);
+        userGroupInfoCol.update(query, setter);
         System.out.println("done");
     }
 
     private void computeAndUpdateAllStrength(String groupId) throws TaskException, StorageException {
         // compute all blahs' strength
+
         System.out.println("Start all blahs' strength for groupd : " + groupId);
 
         List<String> blahIdList = getAllBlahs(groupId);
 
+        int i = 1;
         for (String blahId : blahIdList) {
-            HashMap<String, Double> cohortStrength = computeBlahStrength(blahId, groupId);
-            updateBlahStrength(blahId, cohortStrength);
+            try {
+                System.out.print(i++ + "/" + blahIdList.size() + "\t");
+                HashMap<String, Double> cohortStrength = computeBlahStrength(blahId, groupId, true);
+                updateBlahStrength(blahId, cohortStrength);
+            }
+            catch (TaskException e) {
+
+                System.out.println("skipped");
+                System.out.println(e.getMessage());
+                if (e.type == TaskExceptionType.SKIP) continue;
+                else continue; // TODO how to deal with re-compute case for single blah strength task?
+            }
         }
 
         System.out.println("All blah's strength computation is done");
 
         // compute all users' strength
-        System.out.println("Start all users' strength for groupd : " + groupId);
+        System.out.println("Start computing all users' strength for groupd : " + groupId);
 
         List<String> userIdList = getAllUsers(groupId);
 
+        int j = 1;
         for (String userId : userIdList) {
-            HashMap<String, Double> cohortStrength = computeUserStrength(userId, groupId);
-            updateUserStrength(userId, groupId, cohortStrength);
+//            try {
+                System.out.print(j++ + "/" + userIdList.size() + "\t");
+                HashMap<String, Double> cohortStrength = computeUserStrength(userId, groupId, true);
+                updateUserStrength(userId, groupId, cohortStrength);
+//            }
+//            catch (TaskException e) {
+//                System.out.println("skipped");
+//                if (e.type == TaskExceptionType.SKIP) continue;
+//                else continue; // TODO how to deal with re-compute case for single blah strength task?
+//            }
         }
 
         System.out.println("All users' strength computation is done");

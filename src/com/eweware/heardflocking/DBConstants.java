@@ -8,9 +8,7 @@ public interface DBConstants {
     public final String DEV_DB_SERVER = "localhost";
     public final String QA_DB_SERVER = "qa.db.blahgua.com";
     public final String PROD_DB_SERVER = "";
-    public final int DEV_DB_SERVER_PORT = 21191;
-    public final int QA_DB_SERVER_PORT = 21191;
-    public final int PROD_DB_SERVER_PORT = 21191;
+    public final int DB_SERVER_PORT = 21191;
 
     public interface BlahInfo {
         public static final String ID = "_id";
@@ -42,8 +40,8 @@ public interface DBConstants {
         public static final String ID = "_id";
         public static final String USER_ID = "U";
         public static final String GROUP_ID = "G";
-        public static final String COHORT_LIST = "CH";
-        public static final String NEXT_GENERATION_COHORT_LIST = "CHN";
+        public static final String CURRENT_COHORT_LIST = "CH";
+        public static final String NEXT_COHORT_LIST = "CHN";
         public static final String STRENGTH_UPDATE_TIME = "Su";
         public static final String STRENGTH = "S";
 
@@ -78,6 +76,9 @@ public interface DBConstants {
         public static final String ID = "_id";
         public static final String USER_ID = "U";
         public static final String BLAH_ID = "B";
+        public static final String YEAR = "Y";
+        public static final String MONTH = "M";
+        public static final String DAY = "D";
         public static final String VIEWS = "V";
         public static final String OPENS = "O";
         public static final String COMMENTS = "C";

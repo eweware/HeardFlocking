@@ -106,6 +106,8 @@ public class CohortClusteringService extends TimerTask{
     private CloudQueueClient queueClient;
     private CloudQueue strengthTaskQueue;
 
+    private final boolean TEST_ONLY_TECH = true;
+
     @Override
     public void run() {
         try {
@@ -114,9 +116,10 @@ public class CohortClusteringService extends TimerTask{
             System.out.println();
 
             initializeMongoDB();
-            getGroups();
 
             for (String gid : groupNames.keySet()) {
+                groupId = gid;
+                if (TEST_ONLY_TECH && !groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
 
                 System.out.print("Check need for clustering group '" + groupNames.get(gid) + "' id : " + gid + " ...");
                 if (!checkNeedClustering(gid)) {
@@ -127,7 +130,6 @@ public class CohortClusteringService extends TimerTask{
                     System.out.println("YES");
                 }
 
-                groupId = gid;
                 groupName = groupNames.get(groupId);
 
                 System.out.println("Start cohort clustering for '" + groupName + "' id : " + groupId);
@@ -185,6 +187,7 @@ public class CohortClusteringService extends TimerTask{
                 produceStrengthTask();
 
                 System.out.println();
+                System.out.println("All done, wait for next round clustering");
             }
         }
         catch (Exception e) {
@@ -196,7 +199,7 @@ public class CohortClusteringService extends TimerTask{
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection...");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DEV_DB_SERVER_PORT);
+        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
 
         userDB = mongoClient.getDB("userdb");
         blahDB = mongoClient.getDB("blahdb");
@@ -213,6 +216,8 @@ public class CohortClusteringService extends TimerTask{
         userBlahStatsCol = statsDB.getCollection("userblahstats");
 
         System.out.println("done");
+
+        getGroups();
     }
 
     private void getGroups() {
@@ -281,18 +286,7 @@ public class CohortClusteringService extends TimerTask{
         // but in that case we can not restrict blahs to only recently created ones
         for (String blahId : blahIdIndexMap.keySet()) {
             // aggregate every user's activity to this blah
-            // match blahId, group by userId, sum activities
-            BasicDBObject match = new BasicDBObject("$match", new BasicDBObject(DBConstants.UserBlahStats.BLAH_ID, new ObjectId(blahId)));
-
-            BasicDBObject groupFields = new BasicDBObject(DBConstants.UserBlahStats.USER_ID, DBConstants.UserBlahStats.USER_ID);
-            groupFields.append(DBConstants.UserBlahStats.VIEWS, new BasicDBObject("$sum", DBConstants.UserBlahStats.VIEWS));
-            groupFields.append(DBConstants.UserBlahStats.OPENS, new BasicDBObject("$sum", DBConstants.UserBlahStats.OPENS));
-            groupFields.append(DBConstants.UserBlahStats.COMMENTS, new BasicDBObject("$sum", DBConstants.UserBlahStats.COMMENTS));
-            groupFields.append(DBConstants.UserBlahStats.PROMOTION, new BasicDBObject("$sum", DBConstants.UserBlahStats.PROMOTION));
-            BasicDBObject group = new BasicDBObject("$group", groupFields);
-
-            List<DBObject> pipeline = Arrays.asList(match, group);
-            AggregationOutput output = userBlahStatsCol.aggregate(pipeline);
+            AggregationOutput output = blahAggregation(blahId);
 
             // if the blah doesn't have any activity, skip
             Iterator<DBObject> it = output.results().iterator();
@@ -303,12 +297,12 @@ public class CohortClusteringService extends TimerTask{
             else continue;
 
             // the aggregation is grouped by userId, for each user, compute utility and store
-            for (DBObject userBlah : output.results()) {
-                UserBlahInfo userBlahInfo = new UserBlahInfo(userBlah);
+            for (DBObject userBlahAggregation : output.results()) {
+                UserBlahInfo userBlahInfo = new UserBlahInfo(userBlahAggregation, blahId);
 
                 // if this is a new user, count it
                 if (!userActiveSet.contains(userBlahInfo.userId)) {
-                    userActiveSet.add(userBlahInfo.userId);
+                    userActiveSet.add(userBlahInfo.userId.toString());
                     userActiveCount++;
                 }
 
@@ -320,7 +314,7 @@ public class CohortClusteringService extends TimerTask{
                 if (utilityBlah == null) {
                     utilityBlah = new HashMap<>();
                     utilityBlah.put(blahId, util);
-                    utilityBlahInUser.put(userBlahInfo.userId, utilityBlah);
+                    utilityBlahInUser.put(userBlahInfo.userId.toString(), utilityBlah);
                 } else {
                     utilityBlah.put(blahId, util);
                 }
@@ -328,27 +322,42 @@ public class CohortClusteringService extends TimerTask{
         }
     }
 
+    private AggregationOutput blahAggregation(String blahId) {
+        // match blahId, group by userId, sum activities
+        BasicDBObject match = new BasicDBObject("$match", new BasicDBObject(DBConstants.UserBlahStats.BLAH_ID, new ObjectId(blahId)));
+
+        BasicDBObject groupFields = new BasicDBObject("_id", "$"+DBConstants.UserBlahStats.USER_ID);
+        groupFields.append(DBConstants.UserBlahStats.VIEWS, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.VIEWS));
+        groupFields.append(DBConstants.UserBlahStats.OPENS, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.OPENS));
+        groupFields.append(DBConstants.UserBlahStats.COMMENTS, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.COMMENTS));
+        groupFields.append(DBConstants.UserBlahStats.PROMOTION, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.PROMOTION));
+        BasicDBObject group = new BasicDBObject("$group", groupFields);
+
+        List<DBObject> pipeline = Arrays.asList(match, group);
+        return userBlahStatsCol.aggregate(pipeline);
+    }
+
     private class UserBlahInfo {
-        String blahId;
-        String userId;
+        ObjectId blahId;
+        ObjectId userId;
 
         int views;
         int opens;
         int comments;
         int promotion;
 
-        private UserBlahInfo(DBObject userBlah) {
-            userId = userBlah.get(DBConstants.UserBlahStats.USER_ID).toString();
-            blahId = userBlah.get(DBConstants.UserBlahStats.BLAH_ID).toString();
+        private UserBlahInfo(DBObject userBlahAggregation, String blahId) {
+            userId = (ObjectId) userBlahAggregation.get("_id");
+            this.blahId = new ObjectId(blahId);
 
             Integer obj;
-            obj = (Integer) userBlah.get(DBConstants.UserBlahStats.VIEWS);
+            obj = (Integer) userBlahAggregation.get(DBConstants.UserBlahStats.VIEWS);
             views = obj == null ? 0 : obj;
-            obj = (Integer) userBlah.get(DBConstants.UserBlahStats.OPENS);
+            obj = (Integer) userBlahAggregation.get(DBConstants.UserBlahStats.OPENS);
             opens = obj == null ? 0 : obj;
-            obj = (Integer) userBlah.get(DBConstants.UserBlahStats.COMMENTS);
+            obj = (Integer) userBlahAggregation.get(DBConstants.UserBlahStats.COMMENTS);
             comments = obj == null ? 0 : obj;
-            obj = (Integer) userBlah.get(DBConstants.UserBlahStats.PROMOTION);
+            obj = (Integer) userBlahAggregation.get(DBConstants.UserBlahStats.PROMOTION);
             promotion = obj == null ? 0 : obj;
         }
     }
@@ -627,14 +636,14 @@ public class CohortClusteringService extends TimerTask{
             List<String> cohortIdList = cohortPerUser.get(userId);
 
             BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(userId)).append(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
-            BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.UserGroupInfo.NEXT_GENERATION_COHORT_LIST, convertIdList(cohortIdList)));
+            BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.UserGroupInfo.NEXT_COHORT_LIST, convertIdList(cohortIdList)));
             userGroupInfoCol.update(query, setter);
         }
         System.out.println("done");
     }
 
     private void updateGroupNextGenId(ObjectId generationIdObj) {
-        System.out.print("Writing current generation id into group : " + groupId + " ...");
+        System.out.print("Writing next generation id into group : " + groupId + " ...");
         BasicDBObject query = new BasicDBObject(DBConstants.Groups.ID, new ObjectId(groupId));
         BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.Groups.NEXT_GENERATION, generationIdObj));
         groupsCol.update(query, setter);
@@ -648,7 +657,7 @@ public class CohortClusteringService extends TimerTask{
             List<String> cohortIdList = cohortPerUser.get(userId);
 
             BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(userId)).append(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
-            BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.UserGroupInfo.COHORT_LIST, convertIdList(cohortIdList)));
+            BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.UserGroupInfo.CURRENT_COHORT_LIST, convertIdList(cohortIdList)));
             userGroupInfoCol.update(query, setter);
         }
 
@@ -680,7 +689,7 @@ public class CohortClusteringService extends TimerTask{
     }
 
     private void initializeQueue() throws Exception {
-        System.out.print("Initializing Azure Storage Queue service... ");
+        System.out.print("Initializing Azure Storage Queue service...");
 
         // Retrieve storage account from connection-string.
         CloudStorageAccount storageAccount =

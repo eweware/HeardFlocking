@@ -5,9 +5,9 @@ package com.eweware.heardflocking;
  */
 public interface AzureConstants {
     public static final String AZURE_ACCOUNT_NAME = "weihanstorage";
-    public static final String AZURE_ACCOUNT_KEY = "AccountKey=PKz1eXkKlu07u4SpfyxfCvO1BH4yZCnuXhrQbebIaOdmUfGGD6qV8r+lycj7sNXSwtVTHpo/nJBlHVa4oavNgg==";
+    public static final String AZURE_ACCOUNT_KEY = "PKz1eXkKlu07u4SpfyxfCvO1BH4yZCnuXhrQbebIaOdmUfGGD6qV8r+lycj7sNXSwtVTHpo/nJBlHVa4oavNgg==";
 
-    public static final String STORAGE_CONNECTION_STRING = "DefaultEndpointsProtocol=http;AccountName=" + AZURE_ACCOUNT_NAME + ";" + AZURE_ACCOUNT_KEY;
+    public static final String STORAGE_CONNECTION_STRING = "DefaultEndpointsProtocol=http;AccountName=" + AZURE_ACCOUNT_NAME + ";AccountKey=" + AZURE_ACCOUNT_KEY;
 
     public static final String STRENGTH_TASK_QUEUE = "strengthtaskqueue";
     public static final String INBOX_TASK_QUEUE = "inboxtaskqueue";

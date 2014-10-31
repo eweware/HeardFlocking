@@ -84,7 +84,7 @@ public class InboxMonitor extends TimerTask {
     private void initializeMongoDB() throws UnknownHostException {
         System.out.print("Initializing MongoDB connection... ");
 
-        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DEV_DB_SERVER_PORT);
+        mongoClient = new MongoClient(DBConstants.DEV_DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
         infoDB = mongoClient.getDB("infodb");
 
@@ -96,7 +96,7 @@ public class InboxMonitor extends TimerTask {
         System.out.println("done");
 
         // get group names
-        groupNames = new HashMap<String, String>();
+        groupNames = new HashMap<>();
         DBCursor cursor = groupsCol.find();
         while (cursor.hasNext()) {
             BasicDBObject obj = (BasicDBObject) cursor.next();
@@ -114,20 +114,10 @@ public class InboxMonitor extends TimerTask {
             BasicDBObject group = (BasicDBObject) cursor.next();
             String groupId = group.getObjectId(DBConstants.Groups.ID).toString();
 
-            System.out.print("Checking groupd <" + groupId + "> ... ");
+            System.out.print("Checking group <" + groupId + "> ... ");
 
             if (groupIsActive(group)) {
-                System.out.print("active, producing task... ");
-
-                // produce inbox generation task
-                BasicDBObject task = new BasicDBObject();
-                task.put(AzureConstants.InboxTask.TYPE, AzureConstants.InboxTask.GENERATE_INBOX);
-                task.put(AzureConstants.InboxTask.GROUP_ID, groupId);
-
-                // enqueue
-                CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
-                inboxTaskQueue.addMessage(message);
-                System.out.println("done");
+                produceInboxTask(groupId);
             }
             else {
                 System.out.println("inactive, passed");
@@ -139,5 +129,19 @@ public class InboxMonitor extends TimerTask {
 
     private boolean groupIsActive(BasicDBObject group) {
         return true;
+    }
+
+    private void produceInboxTask(String groupId) throws StorageException {
+        System.out.print("active, producing task... ");
+
+        // produce inbox generation task
+        BasicDBObject task = new BasicDBObject();
+        task.put(AzureConstants.InboxTask.TYPE, AzureConstants.InboxTask.GENERATE_INBOX);
+        task.put(AzureConstants.InboxTask.GROUP_ID, groupId);
+
+        // enqueue
+        CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
+        inboxTaskQueue.addMessage(message);
+        System.out.println("done");
     }
 }
