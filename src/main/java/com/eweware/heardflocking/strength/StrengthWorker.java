@@ -2,9 +2,9 @@ package com.eweware.heardflocking.strength;
 
 
 import Jama.Matrix;
-import Jama.util.Maths;
 import com.eweware.heardflocking.AzureConstants;
 import com.eweware.heardflocking.DBConstants;
+import com.eweware.heardflocking.ServiceProperties;
 import com.microsoft.azure.storage.CloudStorageAccount;
 import com.microsoft.azure.storage.OperationContext;
 import com.microsoft.azure.storage.StorageException;
@@ -21,8 +21,8 @@ import java.util.*;
 /**
  * Created by weihan on 10/23/14.
  */
-public class StrengthTaskWorker {
-    public StrengthTaskWorker(String server) {
+public class StrengthWorker {
+    public StrengthWorker(String server) {
         DB_SERVER = server;
     }
 
@@ -43,44 +43,35 @@ public class StrengthTaskWorker {
     private DBCollection userGroupInfoCol;
     private DBCollection userBlahStatsCol;
 
+    HashMap<String, String> groupNames;
+
     // each task is given this amount of time for processing before it become visible again in the queue
-    final int VISIBLE_TIMEOUT_SECONDS = 60 / 2;
-    final long NO_TASK_WAIT_MILLIS = 1000 * 10;
+    final int QUEUE_VISIBLE_TIMEOUT_SECONDS = ServiceProperties.StrengthWorker.QUEUE_VISIBLE_TIMEOUT_SECONDS;
+    final long NO_TASK_WAIT_MILLIS = ServiceProperties.StrengthWorker.NO_TASK_WAIT_MILLIS;
 
     // author's strength depends on his blahs' strength, only relevant blahs are taken into account
     // a blah is relevant if it was posted within this number of days in the past
-    final int RELEVANT_BLAH_PERIOD_DAYS = 365;
+    final int RECENT_BLAH_DAYS = ServiceProperties.StrengthWorker.RECENT_BLAH_DAYS;
 
     // weights for user-blah utility
-    double wV = 1.0;
-    double wO = 2.0;
-    double wC = 5.0;
-    double wP = 10.0;
+    final double wV = ServiceProperties.StrengthWorker.WEIGHT_VIEW;
+    final double wO = ServiceProperties.StrengthWorker.WEIGHT_OPEN;
+    final double wC = ServiceProperties.StrengthWorker.WEIGHT_COMMENT;
+    final double wP = ServiceProperties.StrengthWorker.WEIGHT_PROMOTION;
 
-    public static void main(String[] args) {
-        // MongoDB server configuration
-        String server = DBConstants.DEV_DB_SERVER;
-        if (args.length > 0) {
-            if (args[0].equals("dev"))
-                server = DBConstants.DEV_DB_SERVER;
-            else if (args[0].equals("qa"))
-                server = DBConstants.QA_DB_SERVER;
-            else if (args[0].equals("prod"))
-                server = DBConstants.PROD_DB_SERVER;
-            else
-            {}
-        }
+    private String servicePrefix = "[StrengthWorker] ";
 
-        new StrengthTaskWorker(server).execute();
-    }
-
-    private void execute() {
+    public void execute() {
         try {
-            initializeQueue();
+            System.out.println(servicePrefix + "start running");
+
             initializeMongoDB();
+            initializeQueue();
+            System.out.println();
+
             // continuously get task to work on
             while (true) {
-                CloudQueueMessage message = strengthTaskQueue.retrieveMessage(VISIBLE_TIMEOUT_SECONDS, null, new OperationContext());
+                CloudQueueMessage message = strengthTaskQueue.retrieveMessage(QUEUE_VISIBLE_TIMEOUT_SECONDS, null, new OperationContext());
                 if (message != null) {
                     // Process the message within certain time, and then delete the message.
                     BasicDBObject task = (BasicDBObject) JSON.parse(message.getMessageContentAsString());
@@ -106,7 +97,7 @@ public class StrengthTaskWorker {
                     }
                 }
                 else {
-                    System.out.println("No more tasks, rest for " + NO_TASK_WAIT_MILLIS + " milliseconds.");
+                    System.out.println(servicePrefix + "no task, sleep for " + NO_TASK_WAIT_MILLIS + " milliseconds");
                     Thread.sleep(NO_TASK_WAIT_MILLIS);
                 }
             }
@@ -118,7 +109,7 @@ public class StrengthTaskWorker {
     }
 
     private void initializeQueue() throws Exception {
-        System.out.print("Initializing Azure Storage Queue service...");
+        System.out.print(servicePrefix +"initialize Azure Storage Queue service...");
 
         // Retrieve storage account from connection-string.
         CloudStorageAccount storageAccount =
@@ -139,7 +130,7 @@ public class StrengthTaskWorker {
     }
 
     private void initializeMongoDB() throws UnknownHostException {
-        System.out.print("Initializing MongoDB connection... ");
+        System.out.print(servicePrefix + "initialize MongoDB...");
 
         mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
@@ -154,7 +145,18 @@ public class StrengthTaskWorker {
         userGroupInfoCol = infoDB.getCollection("userGroupInfo");
         userBlahStatsCol = statsDB.getCollection("userblahstats");
 
+        getGroups();
         System.out.println("done");
+    }
+
+    private void getGroups() {
+        DBCursor cursor = groupsCol.find();
+        groupNames = new HashMap<>();
+        while (cursor.hasNext()) {
+            BasicDBObject group = (BasicDBObject) cursor.next();
+            groupNames.put(group.getObjectId(DBConstants.Groups.ID).toString(), group.getString(DBConstants.Groups.NAME));
+        }
+        cursor.close();
     }
 
     private void processTask(BasicDBObject task) throws TaskException, StorageException {
@@ -163,12 +165,14 @@ public class StrengthTaskWorker {
         if (taskType == AzureConstants.StrengthTask.COMPUTE_BLAH_STRENGTH) {
             String blahId = (String) task.get(AzureConstants.StrengthTask.BLAH_ID);
             String groupId = (String) task.get(AzureConstants.StrengthTask.GROUP_ID);
+            System.out.print(servicePrefix + "[blah] ");
             HashMap<String, Double> cohortStrength = computeBlahStrength(blahId, groupId, false);
             updateBlahStrength(blahId, cohortStrength);
         }
         else if (taskType == AzureConstants.StrengthTask.COMPUTE_USER_STRENGTH) {
             String userId = (String) task.get(AzureConstants.StrengthTask.USER_ID);
             String groupId = (String) task.get(AzureConstants.StrengthTask.GROUP_ID);
+            System.out.print(servicePrefix + "[blah] ");
             HashMap<String, Double> cohortStrength = computeUserStrength(userId, groupId, false);
             updateUserStrength(userId, groupId, cohortStrength);
         }
@@ -194,7 +198,7 @@ public class StrengthTaskWorker {
     }
 
     private HashMap<String, Double> computeBlahStrength(String blahId, String groupId, boolean nextGen) throws TaskException {
-        System.out.print("Compute strength blah id : " + blahId + " ...");
+        System.out.print("compute strength blah id : " + blahId + " ...");
 
         // if compute strength for current generation
         // get current generation id for this blah's group, otherwise get next generation id
@@ -414,7 +418,7 @@ public class StrengthTaskWorker {
     }
 
     private HashMap<String, Double> computeUserStrength(String userId, String groupId, boolean nextGen) {
-        System.out.print("Compute strength user id : " + userId + " ...");
+        System.out.print("compute strength user id : " + userId + " ...");
 
         // get cohort list for this group for current generation or next generation
         List<String> cohortIdList = getCohortIdList(groupId, nextGen);
@@ -469,7 +473,7 @@ public class StrengthTaskWorker {
 
         // only consider blahs authored by the user in the recent certain number of months
         Calendar cal = Calendar.getInstance();
-        cal.add(Calendar.DAY_OF_YEAR, -RELEVANT_BLAH_PERIOD_DAYS);
+        cal.add(Calendar.DAY_OF_YEAR, -RECENT_BLAH_DAYS);
         Date earliestRelevantDate = cal.getTime();
         query.put(DBConstants.BlahInfo.CREATE_TIME, new BasicDBObject("$gt", earliestRelevantDate));
 
@@ -535,15 +539,16 @@ public class StrengthTaskWorker {
 
     private void computeAndUpdateAllStrength(String groupId) throws TaskException, StorageException {
         // compute all blahs' strength
-
-        System.out.println("Start all blahs' strength for groupd : " + groupId);
+        String groupPrefix = "[" + groupNames.get(groupId) + "] ";
+        System.out.println(servicePrefix + groupPrefix + "compute all blahs' strength");
 
         List<String> blahIdList = getAllBlahs(groupId);
 
         int i = 1;
         for (String blahId : blahIdList) {
             try {
-                System.out.print(i++ + "/" + blahIdList.size() + "\t");
+                System.out.print(servicePrefix + "[blah] [all] " + groupPrefix);
+                System.out.printf("%9d / %9d\t", i++, blahIdList.size());
                 HashMap<String, Double> cohortStrength = computeBlahStrength(blahId, groupId, true);
                 updateBlahStrength(blahId, cohortStrength);
             }
@@ -556,19 +561,20 @@ public class StrengthTaskWorker {
             }
         }
 
-        System.out.println("All blah's strength computation is done");
+        System.out.println(servicePrefix + groupPrefix + "all blah's strength computation is done");
 
         // compute all users' strength
-        System.out.println("Start computing all users' strength for groupd : " + groupId);
+        System.out.println(servicePrefix + groupPrefix + "compute all users' strength");
 
         List<String> userIdList = getAllUsers(groupId);
 
         int j = 1;
         for (String userId : userIdList) {
 //            try {
-                System.out.print(j++ + "/" + userIdList.size() + "\t");
-                HashMap<String, Double> cohortStrength = computeUserStrength(userId, groupId, true);
-                updateUserStrength(userId, groupId, cohortStrength);
+            System.out.print(servicePrefix + "[user] [all] " +  groupPrefix);
+            System.out.printf("%9d / %9d\t", j++, userIdList.size());
+            HashMap<String, Double> cohortStrength = computeUserStrength(userId, groupId, true);
+            updateUserStrength(userId, groupId, cohortStrength);
 //            }
 //            catch (TaskException e) {
 //                System.out.println("skipped");
@@ -577,14 +583,15 @@ public class StrengthTaskWorker {
 //            }
         }
 
-        System.out.println("All users' strength computation is done");
+        System.out.println(servicePrefix + groupPrefix + "all users' strength computation is done");
 
         // produce new cluster inbox task
         produceInboxTask(groupId);
     }
 
     private List<String> getAllBlahs(String groupId) {
-        System.out.print("Getting all blahs in this group...");
+        String groupPrefix = "[" + groupNames.get(groupId) + "] ";
+        System.out.print(servicePrefix + groupPrefix + "getting all blahs in group '" + groupNames.get(groupId) + "'...");
         BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.GROUP_ID, new ObjectId(groupId));
         DBCursor cursor = blahInfoCol.find(query);
 
@@ -600,7 +607,8 @@ public class StrengthTaskWorker {
     }
 
     private List<String> getAllUsers(String groupId) {
-        System.out.print("Getting all blahs in this group...");
+        String groupPrefix = "[" + groupNames.get(groupId) + "] ";
+        System.out.print(servicePrefix + groupPrefix + "getting all blahs in this group...");
         BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
         DBCursor cursor = userGroupInfoCol.find(query);
 
@@ -616,7 +624,8 @@ public class StrengthTaskWorker {
     }
 
     private void produceInboxTask(String groupId) throws StorageException {
-        System.out.print("Producing new cluster inbox task...");
+        String groupPrefix = "[" + groupNames.get(groupId) + "] ";
+        System.out.print(servicePrefix + groupPrefix + "produce new cluster inbox task...");
 
         BasicDBObject task = new BasicDBObject();
         task.put(AzureConstants.InboxTask.TYPE, AzureConstants.InboxTask.GENERATE_INBOX_NEW_CLUSTER);

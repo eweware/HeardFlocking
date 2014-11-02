@@ -1,6 +1,7 @@
 package com.eweware.heardflocking.util;
 
 import com.eweware.heardflocking.DBConstants;
+import com.eweware.heardflocking.ServiceProperties;
 import com.mongodb.*;
 import org.bson.types.ObjectId;
 
@@ -13,23 +14,6 @@ import java.util.*;
 public class TransferInfoData {
     public TransferInfoData(String server) {
         DB_SERVER = server;
-    }
-
-    public static void main(String[] args) {
-        // MongoDB server configuration
-        String server = DBConstants.DEV_DB_SERVER;
-        if (args.length > 0) {
-            if (args[0].equals("dev"))
-                server = DBConstants.DEV_DB_SERVER;
-            else if (args[0].equals("qa"))
-                server = DBConstants.QA_DB_SERVER;
-            else if (args[0].equals("prod"))
-                server = DBConstants.PROD_DB_SERVER;
-            else
-            {}
-        }
-
-        new TransferInfoData(server).execute();
     }
 
     private String DB_SERVER;
@@ -54,18 +38,25 @@ public class TransferInfoData {
 
     private HashMap<String, String> groupNames;
 
-    private final boolean TEST_ONLY_TECH = false;
+    private final boolean TEST_ONLY_TECH = ServiceProperties.TEST_ONLY_TECH;
+    private final boolean USER_BLAH_INFO_TO_STATS = ServiceProperties.TransferInfoData.USER_BLAH_INFO_TO_STATS;
 
-    private void execute() {
+    private String servicePrefix = "[TransferInfoData] ";
+    private String groupPrefix;
+
+    public void execute() {
         try {
+            System.out.println(servicePrefix + "start running");
             initializeMongoDB();
+            System.out.println();
 
             for (String groupId : groupNames.keySet()) {
                 if (TEST_ONLY_TECH && !groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
+                groupPrefix = "[" + groupNames.get(groupId) + "] ";
 
                 List<String> blahIdList = transferBlahInfo(groupId);
                 transferUserGroupInfo(groupId);
-                transferUserBlahInfoToStats(blahIdList);
+                if (USER_BLAH_INFO_TO_STATS) transferUserBlahInfoToStats(blahIdList);
             }
 
         } catch (Exception e) {
@@ -74,7 +65,7 @@ public class TransferInfoData {
     }
 
     private void initializeMongoDB() throws UnknownHostException {
-        System.out.print("Initializing MongoDB connection...");
+        System.out.print(servicePrefix + "initialize MongoDB connection...");
 
         mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
@@ -120,11 +111,11 @@ public class TransferInfoData {
             writeBlahInfo(blahInfo);
             blahIdList.add(blahInfo.blahId.toString());
             if (i % 100 == 0)
-                System.out.println(i + " documents transferred from blahdb.blahs to infodb.blahInfo");
+                System.out.printf("%s%s %-9d doc transferred   blahdb.blahs -> infodb.blahInfo\n", servicePrefix, groupPrefix, i);
             i++;
         }
         cursor.close();
-        System.out.println("done. " + i + " blahInfo transferred.");
+        System.out.printf("\n%s%s %-9d blahInfo transferred\n\n", servicePrefix, groupPrefix, i);
 
         return blahIdList;
     }
@@ -137,11 +128,11 @@ public class TransferInfoData {
             UserGroupInfo userGroupInfo = new UserGroupInfo(userGroup);
             writeUserGroupInfo(userGroupInfo);
             if (i % 500 == 0)
-                System.out.println(i + " documents transferred from userdb.usergroups to infodb.userGroupInfo");
+                System.out.printf("%s%s %-9d doc transferred   userdb.usergroups -> infodb.userGroupInfo\n", servicePrefix, groupPrefix, i);
             i++;
         }
         cursor.close();
-        System.out.println("done. " + i + " userGroupInfo transferred.");
+        System.out.printf("\n%s%s %-9d userGroupInfo transferred\n\n", servicePrefix, groupPrefix, i);
     }
 
     private void transferUserBlahInfoToStats(List<String> blahIdList) {
@@ -156,12 +147,12 @@ public class TransferInfoData {
                 // write into statsdb with fake date year=0 month=0 day=0
                 writeUserBlahInfoToStats(userBlahInfo);
                 if (i % 100 == 0)
-                    System.out.println(i + " documents transferred from userdb.userBlahInfo to infodb.userBlahInfo");
+                    System.out.printf("%s%s %-9d doc transferred   userdb.userBlahInfo -> infodb.userBlahInfo\n", servicePrefix, groupPrefix, i);
                 i++;
             }
             cursor.close();
         }
-        System.out.println("done. " + i + " documents transferred.");
+        System.out.printf("\n%s%s %-9d userblahstats transferred\n\n", servicePrefix, groupPrefix, i);
     }
 
     private class BlahInfo {

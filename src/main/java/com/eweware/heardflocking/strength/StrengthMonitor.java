@@ -1,7 +1,7 @@
 package com.eweware.heardflocking.strength;
 
-import com.eweware.heardflocking.AzureConstants;
-import com.eweware.heardflocking.DBConstants;
+import com.eweware.heardflocking.*;
+import com.eweware.heardflocking.ServiceProperties;
 import com.microsoft.azure.storage.*;
 import com.microsoft.azure.storage.queue.*;
 import com.mongodb.*;
@@ -20,8 +20,10 @@ import java.util.concurrent.TimeUnit;
  */
 public class StrengthMonitor extends TimerTask {
 
-    public StrengthMonitor(String server) {
+    public StrengthMonitor(String server, Date startTime, int periodHours) {
         DB_SERVER = server;
+        this.startTime = startTime;
+        this.periodHours = periodHours;
     }
 
     private CloudQueueClient queueClient;
@@ -38,51 +40,45 @@ public class StrengthMonitor extends TimerTask {
 
     private HashMap<String, String> groupNames;
 
-    private static final int RUN_PERIOD_HOURS = 24;
-    private final int RELEVANT_BLAH_MONTHS = 24;
+    private final Date startTime;
+    private int periodHours;
 
-    private final boolean TEST_ONLY_TECH = false;
+    private static final int PERIOD_HOURS = ServiceProperties.StrengthMonitor.PERIOD_HOURS;
+    private final int RECENT_BLAH_MONTHS = ServiceProperties.StrengthMonitor.RECENT_BLAH_MONTHS;
 
-    public static void main(String[] args) {
-        // MongoDB server configuration
-        String server = DBConstants.DEV_DB_SERVER;
-        if (args.length > 0) {
-            if (args[0].equals("dev"))
-                server = DBConstants.DEV_DB_SERVER;
-            else if (args[0].equals("qa"))
-                server = DBConstants.QA_DB_SERVER;
-            else if (args[0].equals("prod"))
-                server = DBConstants.PROD_DB_SERVER;
-            else
-            {}
-        }
+    private final boolean TEST_ONLY_TECH = ServiceProperties.TEST_ONLY_TECH;
 
+    private String servicePrefix = "[StrengthMonitor] ";
+
+    public static void execute(String server) {
         Timer timer = new Timer();
         Calendar cal = Calendar.getInstance();
 
         // set time to run
-//        cal.set(Calendar.HOUR_OF_DAY, 20);
+        cal.set(Calendar.HOUR_OF_DAY, ServiceProperties.StrengthMonitor.START_HOUR);
         cal.set(Calendar.MINUTE, 0);
         cal.set(Calendar.SECOND, 0);
         cal.set(Calendar.MILLISECOND, 0);
 
         // set period
+        System.out.println("[StrengthMonitor] start running, period=" + PERIOD_HOURS + " (hours), time : "  + new Date());
 
-
-        System.out.println("StrengthMonitor set to run once for every " + RUN_PERIOD_HOURS + " hours, starting at "  + cal.getTime().toString());
-
-        timer.schedule(new StrengthMonitor(server), cal.getTime(), TimeUnit.HOURS.toMillis(RUN_PERIOD_HOURS));
+        timer.schedule(new StrengthMonitor(server, cal.getTime(), PERIOD_HOURS), cal.getTime(), TimeUnit.HOURS.toMillis(PERIOD_HOURS));
     }
 
     @Override
     public void run() {
         try {
-            initializeQueue();
             initializeMongoDB();
+            initializeQueue();
 
             scanBlahs();
             scanUsers();
 
+            Calendar nextTime = Calendar.getInstance();
+            nextTime.setTime(startTime);
+            nextTime.add(Calendar.HOUR, periodHours);
+            System.out.println(servicePrefix + "next scan in less than " + periodHours + " hours at time : " + nextTime.getTime());
         }
         catch (Exception e) {
             e.printStackTrace();
@@ -90,7 +86,7 @@ public class StrengthMonitor extends TimerTask {
     }
 
     private void initializeQueue() throws Exception {
-        System.out.print("Initializing Azure Storage Queue service... ");
+        System.out.print(servicePrefix + "initialize Azure Storage Queue service... ");
 
         // Retrieve storage account from connection-string.
         CloudStorageAccount storageAccount =
@@ -109,7 +105,7 @@ public class StrengthMonitor extends TimerTask {
     }
 
     private void initializeMongoDB() throws UnknownHostException {
-        System.out.print("Initializing MongoDB connection... ");
+        System.out.print(servicePrefix + "initialize MongoDB connection... ");
 
         mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
@@ -136,15 +132,17 @@ public class StrengthMonitor extends TimerTask {
     }
 
     private void scanBlahs() throws StorageException {
-        System.out.println("### Start scanning blahs...");
+        System.out.println(servicePrefix + "start scanning blahs...");
         // only look at blahs created within certain number of months
         Calendar cal = Calendar.getInstance();
-        cal.add(Calendar.MONTH, -RELEVANT_BLAH_MONTHS);
+        cal.add(Calendar.MONTH, -RECENT_BLAH_MONTHS);
         Date earliestRelevantDate = cal.getTime();
 
         // scan by group
         for (String groupId : groupNames.keySet()) {
             if (TEST_ONLY_TECH && !groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
+
+            String groupPrefix = "[" + groupNames.get(groupId) + "] ";
 
             // get all relevant blah info in this group
             BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.GROUP_ID, new ObjectId(groupId));
@@ -160,7 +158,7 @@ public class StrengthMonitor extends TimerTask {
                 BasicDBObject blahInfo = (BasicDBObject) cursor.next();
                 String blahId = blahInfo.getString(DBConstants.BlahInfo.ID);
 
-                System.out.print("Checking blah <" + blahId + "> ... ");
+                System.out.print(servicePrefix + groupPrefix + "check blah <" + blahId + "> in group '" + groupNames.get(groupId) + "'... ");
 
                 if (blahIsActive(blahInfo)) {
                     System.out.print("active, producing task... ");
@@ -182,47 +180,56 @@ public class StrengthMonitor extends TimerTask {
             cursor.close();
         }
 
-        System.out.println("### Finish blah scanning.\n");
+        System.out.println(servicePrefix + "finish blah scanning.\n");
     }
 
     private void scanUsers() throws StorageException {
-        System.out.println("### Start scanning users...");
-        // get user-group info
-        // only scan user whose "next check time" as passed
-        List<BasicDBObject> orList = new ArrayList<>();
-        orList.add(new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date())));
-        orList.add(new BasicDBObject(DBConstants.BlahInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false)));
-        BasicDBObject query = new BasicDBObject("$or", orList);
+        System.out.println(servicePrefix + "start scanning users...");
 
-        Cursor cursor = userGroupInfoCol.find(query);
+        // scan by group
+        for (String gid : groupNames.keySet()) {
+            if (TEST_ONLY_TECH && !gid.equals("522ccb78e4b0a35dadfcf73f")) continue;
 
-        while (cursor.hasNext()) {
-            BasicDBObject userGroupInfo = (BasicDBObject) cursor.next();
-            String userId = userGroupInfo.get(DBConstants.UserGroupInfo.USER_ID).toString();
+            String groupPrefix = "[" + groupNames.get(gid) + "] ";
 
-            System.out.print("Checking user <" + userId + "> ... ");
+            // get user-group info
+            // only scan user whose "next check time" as passed
+            List<BasicDBObject> orList = new ArrayList<>();
+            orList.add(new BasicDBObject(DBConstants.UserGroupInfo.NEXT_CHECK_TIME, new BasicDBObject("$lt", new Date())));
+            orList.add(new BasicDBObject(DBConstants.UserGroupInfo.NEXT_CHECK_TIME, new BasicDBObject("$exists", false)));
+            BasicDBObject query = new BasicDBObject("$or", orList);
+            query.append(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(gid));
 
-            if (userIsActive(userGroupInfo)) {
-                System.out.print("active, producing task... ");
+            Cursor cursor = userGroupInfoCol.find(query);
+
+            while (cursor.hasNext()) {
+                BasicDBObject userGroupInfo = (BasicDBObject) cursor.next();
+                String userId = userGroupInfo.get(DBConstants.UserGroupInfo.USER_ID).toString();
                 String groupId = userGroupInfo.get(DBConstants.UserGroupInfo.GROUP_ID).toString();
 
-                // produce re-compute strength task
-                BasicDBObject task = new BasicDBObject();
-                task.put(AzureConstants.StrengthTask.TYPE, AzureConstants.StrengthTask.COMPUTE_USER_STRENGTH);
-                task.put(AzureConstants.StrengthTask.USER_ID, userId);
-                task.put(AzureConstants.StrengthTask.GROUP_ID, groupId);
+                System.out.print(servicePrefix + groupPrefix + "check user <" + userId + "> in group '" + groupNames.get(groupId) + "'... ");
 
-                // enqueue
-                CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
-                strengthTaskQueue.addMessage(message);
-                System.out.println("done");
+                if (userIsActive(userGroupInfo)) {
+                    System.out.print("active, producing task... ");
+
+
+                    // produce re-compute strength task
+                    BasicDBObject task = new BasicDBObject();
+                    task.put(AzureConstants.StrengthTask.TYPE, AzureConstants.StrengthTask.COMPUTE_USER_STRENGTH);
+                    task.put(AzureConstants.StrengthTask.USER_ID, userId);
+                    task.put(AzureConstants.StrengthTask.GROUP_ID, groupId);
+
+                    // enqueue
+                    CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
+                    strengthTaskQueue.addMessage(message);
+                    System.out.println("done");
+                } else {
+                    System.out.println("inactive, passed");
+                }
             }
-            else {
-                System.out.println("inactive, passed");
-            }
+            cursor.close();
         }
-        cursor.close();
-        System.out.println("### Finish user scanning.\n");
+        System.out.println(servicePrefix + "finish user scanning.\n");
     }
 
     private boolean blahIsActive(BasicDBObject blahInfo) {

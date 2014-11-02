@@ -2,6 +2,7 @@ package com.eweware.heardflocking.inbox;
 
 import com.eweware.heardflocking.AzureConstants;
 import com.eweware.heardflocking.DBConstants;
+import com.eweware.heardflocking.ServiceProperties;
 import com.microsoft.azure.storage.CloudStorageAccount;
 import com.microsoft.azure.storage.StorageException;
 import com.microsoft.azure.storage.queue.CloudQueue;
@@ -18,9 +19,14 @@ import java.util.concurrent.TimeUnit;
  * Created by weihan on 10/28/14.
  */
 public class InboxMonitor extends TimerTask {
-    public InboxMonitor(String server) {
+    public InboxMonitor(String server, Date startTime, int periodHours) {
         DB_SERVER = server;
+        this.startTime = startTime;
+        this.periodHours = periodHours;
     }
+
+    private final Date startTime;
+    private int periodHours;
 
     private CloudQueueClient queueClient;
     private CloudQueue inboxTaskQueue;
@@ -36,45 +42,41 @@ public class InboxMonitor extends TimerTask {
 
     private HashMap<String, String> groupNames;
 
-    private final boolean TEST_ONLY_TECH = false;
+    private final boolean TEST_ONLY_TECH = ServiceProperties.TEST_ONLY_TECH;
 
-    public static void main(String[] args) {
-        // MongoDB server configuration
-        String server = DBConstants.DEV_DB_SERVER;
-        if (args.length > 0) {
-            if (args[0].equals("dev"))
-                server = DBConstants.DEV_DB_SERVER;
-            else if (args[0].equals("qa"))
-                server = DBConstants.QA_DB_SERVER;
-            else if (args[0].equals("prod"))
-                server = DBConstants.PROD_DB_SERVER;
-            else
-            {}
-        }
+    private String servicePrefix = "[InboxMonitor] ";
 
+    public static void execute(String server) {
         Timer timer = new Timer();
         Calendar cal = Calendar.getInstance();
 
         // set time to run
-//        cal.set(Calendar.HOUR_OF_DAY, 20);
+//        cal.set(Calendar.HOUR_OF_DAY, 0);
         cal.set(Calendar.MINUTE, 0);
         cal.set(Calendar.SECOND, 0);
         cal.set(Calendar.MILLISECOND, 0);
 
         // set period
-        int periodHours = 24;
+        int PERIOD_HOURS = ServiceProperties.InboxMonitor.PERIOD_HOURS;
 
-        System.out.println("InboxMonitor set to run once for every " + periodHours + " hours, starting at "  + cal.getTime().toString());
+        System.out.println("[InboxMonitor] start running, period=" + PERIOD_HOURS + " (hours), time : "  + new Date());
 
-        timer.schedule(new InboxMonitor(server), cal.getTime(), TimeUnit.HOURS.toMillis(periodHours));
+        timer.schedule(new InboxMonitor(server, cal.getTime(), PERIOD_HOURS), cal.getTime(), TimeUnit.HOURS.toMillis(PERIOD_HOURS));
     }
 
     @Override
     public void run() {
         try {
+            System.out.println(startTime);
+
             initializeQueue();
             initializeMongoDB();
             scanGroups();
+
+            Calendar nextTime = Calendar.getInstance();
+            nextTime.setTime(startTime);
+            nextTime.add(Calendar.HOUR, periodHours);
+            System.out.println(servicePrefix + "next scan in less than " + periodHours + " hours at time : " + nextTime.getTime());
         }
         catch (Exception e) {
             e.printStackTrace();
@@ -82,7 +84,7 @@ public class InboxMonitor extends TimerTask {
     }
 
     private void initializeQueue() throws Exception {
-        System.out.print("Initializing Azure Storage Queue service... ");
+        System.out.print(servicePrefix + "initialize Azure Storage Queue service... ");
 
         // Retrieve storage account from connection-string.
         CloudStorageAccount storageAccount =
@@ -101,7 +103,7 @@ public class InboxMonitor extends TimerTask {
     }
 
     private void initializeMongoDB() throws UnknownHostException {
-        System.out.print("Initializing MongoDB connection... ");
+        System.out.print(servicePrefix + "initialize MongoDB connection...");
 
         mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
@@ -125,7 +127,8 @@ public class InboxMonitor extends TimerTask {
     }
 
     private void scanGroups() throws StorageException {
-        System.out.println("### Start scanning groups...");
+        System.out.println(servicePrefix + "start scanning groups...");
+        System.out.println();
         // only look at blahs created within certain number of months
         Cursor cursor = groupsCol.find();
 
@@ -135,7 +138,7 @@ public class InboxMonitor extends TimerTask {
 
             if (TEST_ONLY_TECH && !groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
 
-            System.out.print("Checking group <" + groupId + "> ... ");
+            System.out.print(servicePrefix + "check group " + groupNames.get(groupId) + "' ... ");
 
             if (groupIsActive(group)) {
                 produceInboxTask(groupId);
@@ -145,7 +148,8 @@ public class InboxMonitor extends TimerTask {
             }
         }
         cursor.close();
-        System.out.println("### Finish group scanning.\n");
+        System.out.println();
+        System.out.println(servicePrefix + "finish group scanning\n");
     }
 
     private boolean groupIsActive(BasicDBObject group) {

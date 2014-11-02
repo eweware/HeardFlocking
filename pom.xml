@@ -6,7 +6,8 @@
 
     <groupId>com.eweware</groupId>
     <artifactId>HeardFlocking</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.0</version>
+
     <dependencies>
         <dependency>
             <groupId>com.microsoft.azure</groupId>
@@ -25,5 +26,36 @@
         </dependency>
     </dependencies>
 
+    <build>
+        <plugins>
+            <plugin>
+                <!-- Build an executable JAR -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>2.5</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.eweware.heardflocking.Main</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>2.4.1</version>
+                <configuration>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.eweware.heardflocking.Main</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin></plugins>
+    </build>
 
 </project>

@@ -1,6 +1,7 @@
 package com.eweware.heardflocking.util;
 
 import com.eweware.heardflocking.DBConstants;
+import com.eweware.heardflocking.ServiceProperties;
 import com.mongodb.*;
 import org.bson.types.ObjectId;
 
@@ -15,23 +16,6 @@ import java.util.Random;
 public class RandomNewActivity {
     public RandomNewActivity(String server) {
         DB_SERVER = server;
-    }
-
-    public static void main(String[] args) {
-        // MongoDB server configuration
-        String server = DBConstants.DEV_DB_SERVER;
-        if (args.length > 0) {
-            if (args[0].equals("dev"))
-                server = DBConstants.DEV_DB_SERVER;
-            else if (args[0].equals("qa"))
-                server = DBConstants.QA_DB_SERVER;
-            else if (args[0].equals("prod"))
-                server = DBConstants.PROD_DB_SERVER;
-            else
-            {}
-        }
-
-        new RandomNewActivity(server).execute();
     }
 
     private String DB_SERVER;
@@ -59,31 +43,38 @@ public class RandomNewActivity {
 
     private HashMap<String, String> groupNames;
 
-    private final long BLAH_WAIT_MILLIS = 100;
-    private final double BLAH_NEW_ACT_PROBABILITY = 0.01;
-    private final long USER_WAIT_MILLIS = 100;
-    private final double USER_NEW_ACT_PROBABILITY = 0.01;
+    private final boolean BLAH_NEW_ACTIVITY = ServiceProperties.RandomNewActivity.BLAH_NEW_ACTIVITY;
+    private final boolean USER_NEW_ACTIVITY = ServiceProperties.RandomNewActivity.USER_NEW_ACTIVITY;
 
-    private final boolean TEST_ONLY_TECH = false;
+    private final long BLAH_WAIT_MILLIS = ServiceProperties.RandomNewActivity.BLAH_WAIT_MILLIS;
+    private final long USER_WAIT_MILLIS = ServiceProperties.RandomNewActivity.USER_WAIT_MILLIS;
+    private final double BLAH_NEW_ACT_PROBABILITY = ServiceProperties.RandomNewActivity.BLAH_NEW_ACT_PROBABILITY;
+    private final double USER_NEW_ACT_PROBABILITY = ServiceProperties.RandomNewActivity.User_NEW_ACT_PROBABILITY;
 
-    private void execute() {
+    private final boolean TEST_ONLY_TECH = ServiceProperties.TEST_ONLY_TECH;
+
+    private String servicePrefix = "[RandomNewActivity] ";
+
+    public void execute() {
         try {
             initializeMongoDB();
 
             // two threads for every group, one for blahInfo, one for userGroupInfo
             for (String groupId : groupNames.keySet()) {
                 if (TEST_ONLY_TECH && !groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
-
+                String groupPrefix = "[" + groupNames.get(groupId) + "] ";
                 // blahInfo
                 Thread randomBlahInfo = new Thread(new Runnable() {
                     @Override
                     public void run() {
-                        long threadId = Thread.currentThread().getId();
-                        System.out.println("Thread " + threadId + " start : blahInfo random new activity");
-                        try {
-                            insertRandomNewActivityBlahInfo(groupId);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
+                        if (BLAH_NEW_ACTIVITY) {
+                            long threadId = Thread.currentThread().getId();
+                            System.out.println(servicePrefix + groupPrefix + "Thread " + threadId + " start : blahInfo random new activity");
+                            try {
+                                insertRandomNewActivityBlahInfo(groupId);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
                         }
                     }
                 });
@@ -93,12 +84,14 @@ public class RandomNewActivity {
                 Thread randomUserGroupInfo = new Thread(new Runnable() {
                     @Override
                     public void run() {
-                        long threadId = Thread.currentThread().getId();
-                        System.out.println("Thread " + threadId + " start : userGroupInfo random new activity");
-                        try {
-                            insertRandomNewActivityUserGroupInfo(groupId);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
+                        if (USER_NEW_ACTIVITY) {
+                            long threadId = Thread.currentThread().getId();
+                            System.out.println(servicePrefix + groupPrefix + "Thread " + threadId + " start : userGroupInfo random new activity");
+                            try {
+                                insertRandomNewActivityUserGroupInfo(groupId);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
                         }
                     }
                 });
@@ -112,7 +105,7 @@ public class RandomNewActivity {
     }
 
     private void initializeMongoDB() throws UnknownHostException {
-        System.out.print("Initializing MongoDB connection...");
+        System.out.print(servicePrefix + "initialize MongoDB connection...");
 
         mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
         userDB = mongoClient.getDB("userdb");
@@ -152,6 +145,7 @@ public class RandomNewActivity {
     }
 
     private void insertRandomNewActivityBlahInfo(String groupId) throws InterruptedException {
+        String groupPrefix = "[" + groupNames.get(groupId) + "] ";
         while (true) {
             BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.GROUP_ID, new ObjectId(groupId));
             DBCursor cursor = blahInfoCol.find(query);
@@ -182,8 +176,8 @@ public class RandomNewActivity {
 //                    blahInfoTestCol.update(queryBlah, inc, true, false);
                     blahInfoCol.update(queryBlah, inc);
 
-                    long threadId = Thread.currentThread().getId();
-                    System.out.println("Thread " + threadId + " add new activity into blahInfo " + blahIdObj.toString());
+                    //long threadId = Thread.currentThread().getId();
+                    System.out.println(servicePrefix + groupPrefix + "add new activity into blahInfo " + blahIdObj.toString());
 
                     // wait for a bit
                     Thread.sleep(BLAH_WAIT_MILLIS);
@@ -193,6 +187,7 @@ public class RandomNewActivity {
     }
 
     private void insertRandomNewActivityUserGroupInfo(String groupId) throws InterruptedException {
+        String groupPrefix = "[" + groupNames.get(groupId) + "] ";
         while (true) {
             BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.GROUP_ID, new ObjectId(groupId));
             DBCursor cursor = userGroupInfoCol.find(query);
@@ -225,8 +220,8 @@ public class RandomNewActivity {
 //                    userGroupInfoTestCol.update(queryUserGroup, inc, true, false);
                     userGroupInfoCol.update(queryUserGroup, inc);
 
-                    long threadId = Thread.currentThread().getId();
-                    System.out.println("Thread " + threadId + " add new activity into userGroupInfo " + userIdObj.toString());
+                    //long threadId = Thread.currentThread().getId();
+                    System.out.println(servicePrefix + groupPrefix + "add new activity into userGroupInfo " + userIdObj.toString());
 
                     // wait for a bit
                     Thread.sleep(USER_WAIT_MILLIS);
