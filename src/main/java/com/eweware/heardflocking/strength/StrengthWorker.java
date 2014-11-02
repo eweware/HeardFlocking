@@ -198,7 +198,7 @@ public class StrengthWorker {
     }
 
     private HashMap<String, Double> computeBlahStrength(String blahId, String groupId, boolean nextGen) throws TaskException {
-        System.out.print("compute strength blah id : " + blahId + " ...");
+        System.out.print("id : " + blahId + " ...");
 
         // if compute strength for current generation
         // get current generation id for this blah's group, otherwise get next generation id
@@ -404,7 +404,7 @@ public class StrengthWorker {
     }
 
     private void updateBlahStrength(String blahId, HashMap<String, Double> cohortStrength) {
-        System.out.print(", and update database...");
+        System.out.print("update database...");
         BasicDBObject values = new BasicDBObject();
         for (String cohortId : cohortStrength.keySet()) {
             values.put(DBConstants.BlahInfo.STRENGTH + "." + cohortId, cohortStrength.get(cohortId));
@@ -418,7 +418,7 @@ public class StrengthWorker {
     }
 
     private HashMap<String, Double> computeUserStrength(String userId, String groupId, boolean nextGen) {
-        System.out.print("compute strength user id : " + userId + " ...");
+        System.out.print("id : " + userId + " ...");
 
         // get cohort list for this group for current generation or next generation
         List<String> cohortIdList = getCohortIdList(groupId, nextGen);
@@ -522,7 +522,7 @@ public class StrengthWorker {
     }
 
     private void updateUserStrength(String userId, String groupId, HashMap<String, Double> cohortStrength) {
-        System.out.print(" and update database...");
+        System.out.print("update database...");
         // update user's cohort strength and strength update time
         BasicDBObject values = new BasicDBObject();
         for (String cohortId : cohortStrength.keySet()) {

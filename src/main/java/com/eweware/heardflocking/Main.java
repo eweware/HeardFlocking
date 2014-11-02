@@ -7,9 +7,7 @@ import com.eweware.heardflocking.strength.StrengthWorker;
 import com.eweware.heardflocking.util.RandomNewActivity;
 import com.eweware.heardflocking.util.TransferInfoData;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.util.Properties;
 
 /**
@@ -40,15 +38,17 @@ public class Main {
         System.out.println("Load service properties");
         Properties prop = new Properties();
         String propFileName;
-        if (DB_SERVER.equals(DBConstants.DEV_DB_SERVER)) propFileName = "dev.properties";
-        else if (DB_SERVER.equals(DBConstants.QA_DB_SERVER)) propFileName = "qa.properties";
-        else propFileName = "prod.properties";
 
-        InputStream is = getClass().getClassLoader().getResourceAsStream((propFileName));
-        prop.load(is);
+        if (DB_SERVER.equals(DBConstants.DEV_DB_SERVER)) propFileName = "./dev.properties";
+        else if (DB_SERVER.equals(DBConstants.QA_DB_SERVER)) propFileName = "./qa.properties";
+        else propFileName = "./prod.properties";
+
+        FileInputStream is = new FileInputStream(propFileName);
+
         if (is == null) {
             throw new FileNotFoundException("property file '" + propFileName + "' not found");
         }
+        prop.load(is);
 
         // global
         ServiceProperties.TEST_ONLY_TECH = Boolean.parseBoolean(prop.getProperty("test_only_tech", "false"));
