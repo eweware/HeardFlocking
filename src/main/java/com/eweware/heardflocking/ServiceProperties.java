@@ -6,15 +6,16 @@ package com.eweware.heardflocking;
 public class ServiceProperties {
     public static boolean TEST_ONLY_TECH;
 
-//    public static class CohortMonitor {}
-
-    public static class CohortWorker {
-
+    public static class CohortMonitor {
         public static int START_HOUR;
         public static int PERIOD_HOURS;
-        public static boolean TRIVIAL_CLUSTERING;
-        public static boolean KMEANS_CLUSTERING;
-        public static boolean RANDOM_CLUSTERING;
+    }
+
+    public static class CohortWorker {
+        public static int QUEUE_VISIBLE_TIMEOUT_SECONDS;
+        public static long NO_TASK_WAIT_MILLIS;
+
+        public static String CLUSTERING_METHOD;
         public static int NUM_COHORTS;
 
         public static double WEIGHT_VIEW;
@@ -27,13 +28,14 @@ public class ServiceProperties {
 
     public static class StrengthMonitor {
         public static int START_HOUR;
-        public static int PERIOD_HOURS;
+        public static int PERIOD_MINUTES;
         public static int RECENT_BLAH_MONTHS;
     }
 
     public static class StrengthWorker {
         public static int QUEUE_VISIBLE_TIMEOUT_SECONDS;
         public static long NO_TASK_WAIT_MILLIS;
+
         public static int RECENT_BLAH_DAYS;
 
         public static double WEIGHT_VIEW;

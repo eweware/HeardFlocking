@@ -1,11 +1,11 @@
 package com.eweware.heardflocking.cohort;
 
-import com.eweware.heardflocking.AzureConstants;
-import com.eweware.heardflocking.DBConstants;
-import com.eweware.heardflocking.ServiceProperties;
-import com.microsoft.azure.storage.CloudStorageAccount;
-import com.microsoft.azure.storage.queue.CloudQueue;
-import com.microsoft.azure.storage.queue.CloudQueueClient;
+import com.eweware.heardflocking.*;
+import com.eweware.heardflocking.base.AzureConst;
+import com.eweware.heardflocking.base.DBConst;
+import com.eweware.heardflocking.base.HeardAzure;
+import com.eweware.heardflocking.base.HeardDB;
+import com.microsoft.azure.storage.OperationContext;
 import com.microsoft.azure.storage.queue.CloudQueueMessage;
 import com.mongodb.*;
 import com.mongodb.util.JSON;
@@ -13,45 +13,25 @@ import org.bson.types.ObjectId;
 
 import java.io.FileWriter;
 import java.io.IOException;
-import java.net.UnknownHostException;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Created by weihan on 10/10/14.
  */
-public class CohortWorker extends TimerTask{
-
-    public CohortWorker(String server, Date startTime, int periodHours) {
-        DB_SERVER = server;
-        this.startTime = startTime;
-        this.periodHours = periodHours;
+public class CohortWorker{
+    public CohortWorker(HeardDB db, HeardAzure azure) {
+        this.db = db;
+        this.azure = azure;
+        getGroups();
     }
 
-    public static void execute(String server) {
-        Timer timer = new Timer();
-        Calendar cal = Calendar.getInstance();
+    private HeardDB db;
+    private HeardAzure azure;
 
-        // set time to run
-        cal.set(Calendar.HOUR_OF_DAY, ServiceProperties.CohortWorker.START_HOUR);
-        cal.set(Calendar.MINUTE, 0);
-        cal.set(Calendar.SECOND, 0);
-        cal.set(Calendar.MILLISECOND, 0);
-
-        // set period
-        final int PERIOD_HOURS = ServiceProperties.CohortWorker.PERIOD_HOURS;
-
-        System.out.println("[CohortWorker] start running, period=" + PERIOD_HOURS + " (hours), time : "  + new Date());
-
-        timer.schedule(new CohortWorker(server, cal.getTime(), PERIOD_HOURS), cal.getTime(), TimeUnit.HOURS.toMillis(PERIOD_HOURS));
-    }
-
-    private final boolean TRIVIAL_CLUSTERING = ServiceProperties.CohortWorker.TRIVIAL_CLUSTERING;
-    private final boolean KMEANS_CLUSTERING = ServiceProperties.CohortWorker.KMEANS_CLUSTERING;
-    private final boolean RANDOM_CLUSTERING = ServiceProperties.CohortWorker.RANDOM_CLUSTERING;
+    private final String CLUSTERING_METHOD = ServiceProperties.CohortWorker.CLUSTERING_METHOD;
 
     // assumed number of cohort for K-means clustering and random clustering
-    private int NUM_COHORTS = ServiceProperties.CohortWorker.NUM_COHORTS;
+    private int numCohorts = ServiceProperties.CohortWorker.NUM_COHORTS;
 
     // weights for user-blah utility
     final double wV = ServiceProperties.CohortWorker.WEIGHT_VIEW;
@@ -63,52 +43,24 @@ public class CohortWorker extends TimerTask{
     private final boolean ADD_MATURE_COHORT = false;
     private final boolean OUTPUT_COHORT_INFO_FOR_TEST = false;
 
-    private final Date startTime;
-    private int periodHours;
-
-    // mongo server and databases
-    String DB_SERVER;
-
-    MongoClient mongoClient;
-    DB userDB;
-    DB blahDB;
-    DB infoDB;
-    DB statsDB;
-    DBCollection groupsCol;
-    DBCollection blahInfoCol;
-    DBCollection userGroupInfoCol;
-    DBCollection cohortInfoCol;
-    DBCollection generationInfoCol;
-    DBCollection userBlahStatsCol;
-
     HashMap<String, String> groupNames;
+
     String groupId;
-    String groupName;
 
     // blahIdIndexMap : blahId -> vectorIndex
     HashMap<String, Integer> blahIdIndexMap;
-    int blahCount; // #blah in the group
+    HashMap<String, Integer> activeBlahIdIndexMap;
+    HashSet<String> activeBlahSet;
+
     final int RECENT_BLAH_DAYS = ServiceProperties.CohortWorker.RECENT_BLAH_DAYS;
     final long MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
-    HashMap<String, Integer> activeBlahIdIndexMap;
-    HashSet<String> blahActiveSet;
 
     // userIdIndexMapInGroup : groupId -> (userId -> vectorIndex)
     HashMap<String, Integer> userIdIndexMap;
-    int userCount; // #user in the group
-    HashSet<String> userActiveSet;
+    HashSet<String> activeUserSet;
 
-    // utilityBlahInUser : userId -> (blahId -> utility)
-    HashMap<String, HashMap<String, Double>> utilityBlahInUser;
-    int blahActiveCount; // #blah with any activity in the group
-    int userActiveCount; // #user with any activity in the group
-
-    // mapping cohorts between two generations, new cohortId -> old cohortId
-    HashMap<String, String> cohortMapping;
-    final double sameCohortThreshold = 0.9;
-
-    // user-blah utility matrix
-    double[][] data;
+    // blahUtilMapPerUser : userId -> (blahId -> utility)
+    HashMap<String, HashMap<String, Double>> blahUtilMapPerUser;
 
     // cohort clustering result
     ArrayList<Integer>[] cluster; // userIndex -> List of cohortIndex
@@ -116,163 +68,153 @@ public class CohortWorker extends TimerTask{
     HashMap<String, List<String>> userPerCohort; // cohortId -> List of userId
     HashMap<String, List<String>> cohortPerUser; // userId -> List of chortId
 
-    private CloudQueueClient queueClient;
-    private CloudQueue strengthTaskQueue;
-
-    private final boolean TEST_ONLY_TECH = ServiceProperties.TEST_ONLY_TECH;
+    private int QUEUE_VISIBLE_TIMEOUT_SECONDS = ServiceProperties.CohortWorker.QUEUE_VISIBLE_TIMEOUT_SECONDS;
+    private long NO_TASK_WAIT_MILLIS = ServiceProperties.CohortWorker.NO_TASK_WAIT_MILLIS;
 
     private String servicePrefix = "[CohortWorker] ";
     private String groupPrefix;
 
-    @Override
-    public void run() {
+    public void execute() {
         try {
-            System.out.println(servicePrefix + "start scheduled cohort clustering");
-
-            initializeMongoDB();
-            initializeQueue();
-            System.out.println();
-
-            for (String gid : groupNames.keySet()) {
-                groupId = gid;
-                if (TEST_ONLY_TECH && !groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
-
-                groupPrefix = "[" + groupNames.get(gid) + "]";
-                System.out.print(servicePrefix + groupPrefix + " check need for re-clustering : ");
-                if (!checkNeedClustering(gid)) {
-                    System.out.println("NO");
-                    continue;
+            // continuously get task to work on
+            while (true) {
+                CloudQueueMessage message = azure.getCohortTaskQueue().retrieveMessage(QUEUE_VISIBLE_TIMEOUT_SECONDS, null, new OperationContext());
+                if (message != null) {
+                    // Process the message within certain time, and then delete the message.
+                    BasicDBObject task = (BasicDBObject) JSON.parse(message.getMessageContentAsString());
+                    try {
+                        processTask(task);
+                        azure.getCohortTaskQueue().deleteMessage(message);
+                    } catch (TaskException e) {
+                        // there is something wrong about the task
+                        if (e.type == TaskExceptionType.SKIP) {
+                            System.out.println(e.getMessage() + ", task skipped");
+                            azure.getCohortTaskQueue().deleteMessage(message);
+                        } else if (e.type == TaskExceptionType.RECOMPUTE) {
+                            System.out.println(e.getMessage() + ", task put back to queue");
+                            azure.getCohortTaskQueue().updateMessage(message, 0);
+                        } else
+                            e.printStackTrace();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                } else {
+                    System.out.println(servicePrefix + "no task, sleep for " + NO_TASK_WAIT_MILLIS + " milliseconds");
+                    Thread.sleep(NO_TASK_WAIT_MILLIS);
                 }
-                else {
-                    System.out.println("YES");
-                }
-
-                groupName = groupNames.get(groupId);
-
-                System.out.println(servicePrefix + groupPrefix + " start clustering");
-
-                // count number of blahs in this group
-                // assign a vector index for each blah
-                countAndIndexBlah();
-                System.out.print(servicePrefix + groupPrefix + " #blah : " + blahCount);
-
-                // count number of users in this group
-                // assign a index for each user
-                countAndIndexUser();
-                System.out.print("\t#users : " + userCount);
-
-                // compute user-blah utility
-                computeUtilityAll();
-                System.out.print("\t#blah active : " + blahActiveCount);
-                System.out.print("\t#user active : " + userActiveCount);
-                System.out.println();
-
-                // build id - index map for only active blah, we don't need inactive blah for clustering
-                indexActiveBlah();
-
-                // convert utilityBlahInUser into matrix, using blahIdIndexMap and userIdIndexMap
-                getInterestMatrix();
-
-                // to do separate research on the data, output to files
-                if (CLUSTERING_RESEARCH) {
-                    System.out.println("Writing data to local files for research, no clustering is done.");
-                    outputResearchFiles();
-                    return;
-                }
-
-                if (KMEANS_CLUSTERING) {
-                    kmeansClustering();
-                }
-                else if (RANDOM_CLUSTERING){
-                    randomClustering();
-                }
-                else {
-                    trivialClustering();
-                }
-                System.out.println(servicePrefix + groupPrefix + " " + NUM_COHORTS + " cohorts generated");
-
-                // put result into cohort hashmap
-                generateCohortHashMaps();
-
-                // find counterpart of new cohorts in previous generation
-                //buildCohortMapping();
-
-                // write cohort info into mongo
-                outputCohortToMongo();
-
-                //writeFakeBlahCohortStrength();
-
-                // produce "compute all blah and user strength in this group" task and enqueue
-                produceStrengthTask();
-
-                System.out.println();
             }
-            System.out.println(servicePrefix + "all groups are done");
-
-            Calendar nextTime = Calendar.getInstance();
-            nextTime.setTime(startTime);
-            nextTime.add(Calendar.HOUR, periodHours);
-            System.out.println(servicePrefix + "next re-clustering in less than " + periodHours + " hours at time : " + nextTime.getTime());
-            System.out.println();
         }
         catch (Exception e) {
-            System.out.println(e.getMessage());
             e.printStackTrace();
         }
     }
 
-    private void initializeMongoDB() throws UnknownHostException {
-        System.out.print(servicePrefix + "initialize MongoDB...");
+    private void processTask(BasicDBObject task) throws Exception {
+        int taskType = (Integer) task.get(AzureConst.CohortTask.TYPE);
 
-        mongoClient = new MongoClient(DB_SERVER, DBConstants.DB_SERVER_PORT);
+        if (taskType == AzureConst.CohortTask.RECLUSTER) {
+            groupId = (String) task.get(AzureConst.CohortTask.GROUP_ID);
+            recluster();
+        }
+        else {
+            throw new TaskException("Error : undefined task type : " + taskType, TaskExceptionType.SKIP);
+        }
+    }
 
-        userDB = mongoClient.getDB("userdb");
-        blahDB = mongoClient.getDB("blahdb");
-        infoDB = mongoClient.getDB("infodb");
-        statsDB = mongoClient.getDB("statsdb");
+    private enum TaskExceptionType {
+        RECOMPUTE, SKIP
+    }
 
-        groupsCol = userDB.getCollection("groups");
+    private class TaskException extends Exception {
+        private TaskExceptionType type;
+        private TaskException(String msg, TaskExceptionType type) {
+            super(msg);
+            this.type = type;
+        }
+    }
 
-        blahInfoCol = infoDB.getCollection("blahInfo");
-        userGroupInfoCol = infoDB.getCollection("userGroupInfo");
-        cohortInfoCol = infoDB.getCollection("cohortInfo");
-        generationInfoCol = infoDB.getCollection("generationInfo");
+    private void recluster() throws Exception {
+        groupPrefix = "[" + groupNames.get(groupId) + "] ";
 
-        userBlahStatsCol = statsDB.getCollection("userblahstats");
+        System.out.println();
+        System.out.println(servicePrefix + groupPrefix + " start clustering");
 
-        getGroups();
-        System.out.println("done");
+        // count number of blahs in this group
+        // assign a vector index for each blah
+        countAndIndexBlah();
+        System.out.print(servicePrefix + groupPrefix + " #blah : " + blahIdIndexMap.size());
+
+        // count number of users in this group
+        // assign a index for each user
+        countAndIndexUser();
+        System.out.print("\t#users : " + userIdIndexMap.size());
+
+        // compute user-blah utility
+        computeUtilityAll();
+        System.out.print("\t#blah active : " + activeBlahSet.size());
+        System.out.print("\t#user active : " + activeUserSet.size());
+        System.out.println();
+
+        // build id - index map for only active blah, we don't need inactive blah for clustering
+        indexActiveBlah();
+
+        // convert blahUtilMapPerUser into matrix, using blahIdIndexMap and userIdIndexMap
+        double[][] data = getInterestMatrix();
+
+        // to do separate research on the data, output to files
+        if (CLUSTERING_RESEARCH) {
+            System.out.println("Writing data to local files for research, no clustering is done.");
+            outputResearchFiles(data);
+            return;
+        }
+
+        if (CLUSTERING_METHOD.equals("trivial")) {
+            numCohorts = 1;
+            trivialClustering();
+        } else if (CLUSTERING_METHOD.equals("kmeans")) {
+            kmeansClustering(data);
+        } else if (CLUSTERING_METHOD.equals("random")) {
+            randomClustering();
+        } else {
+            numCohorts = 1;
+            trivialClustering();
+        }
+        System.out.println(servicePrefix + groupPrefix + " " + numCohorts + " cohorts generated");
+
+        // put result into cohort hashmap
+        generateCohortHashMaps();
+
+        // write cohort info into mongo
+        updateMongoAndQueue();
+
+        System.out.println();
+
     }
 
     private void getGroups() {
-        DBCursor cursor = groupsCol.find();
+        DBCursor cursor = db.getGroupsCol().find();
         groupNames = new HashMap<>();
         while (cursor.hasNext()) {
             BasicDBObject group = (BasicDBObject) cursor.next();
-            groupNames.put(group.getObjectId(DBConstants.Groups.ID).toString(), group.getString(DBConstants.Groups.NAME));
+            groupNames.put(group.getObjectId(DBConst.Groups.ID).toString(), group.getString(DBConst.Groups.NAME));
         }
         cursor.close();
     }
 
-    private boolean checkNeedClustering(String id) {
-        //TODO add condition to re-cluster cohorts for this group
-        return true;
-    }
-
     private void countAndIndexBlah() {
-        BasicDBObject query = new BasicDBObject(DBConstants.BlahInfo.GROUP_ID, new ObjectId(groupId));
+        BasicDBObject query = new BasicDBObject(DBConst.BlahInfo.GROUP_ID, new ObjectId(groupId));
         // only use blah created within N days
         Date relevantDate = new Date(new Date().getTime() - RECENT_BLAH_DAYS * MILLIS_PER_DAY);
-        query.append(DBConstants.BlahInfo.CREATE_TIME, new BasicDBObject("$gt", relevantDate));
+        query.append(DBConst.BlahInfo.CREATE_TIME, new BasicDBObject("$gt", relevantDate));
 
-        DBCursor cursor = blahInfoCol.find(query);
+        DBCursor cursor = db.getBlahInfoCol().find(query);
 
-        blahCount = 0;
+        int blahCount = 0;
         blahIdIndexMap = new HashMap<>();
 
         while (cursor.hasNext()) {
             BasicDBObject obj = (BasicDBObject) cursor.next();
-            String blahId = obj.getObjectId(DBConstants.BlahInfo.ID).toString();
+            String blahId = obj.getObjectId(DBConst.BlahInfo.ID).toString();
             // count blah and assign index for each blah
             blahIdIndexMap.put(blahId, blahCount);
             blahCount++;
@@ -281,15 +223,15 @@ public class CohortWorker extends TimerTask{
     }
 
     private void countAndIndexUser() {
-        BasicDBObject queryGroup = new BasicDBObject(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
-        DBCursor cursor = userGroupInfoCol.find(queryGroup);
+        BasicDBObject queryGroup = new BasicDBObject(DBConst.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
+        DBCursor cursor = db.getUserGroupInfoCol().find(queryGroup);
 
-        userCount = 0;
+        int userCount = 0;
         userIdIndexMap = new HashMap<>();
 
         while (cursor.hasNext()) {
             BasicDBObject obj = (BasicDBObject) cursor.next();
-            String userId = obj.get(DBConstants.UserGroupInfo.USER_ID).toString();
+            String userId = obj.get(DBConst.UserGroupInfo.USER_ID).toString();
             // count user and assign index for each user
             userIdIndexMap.put(userId, userCount);
             userCount++;
@@ -298,12 +240,10 @@ public class CohortWorker extends TimerTask{
     }
 
     private void computeUtilityAll() {
-        userActiveCount = 0;
-        blahActiveCount = 0;
-        userActiveSet = new HashSet<>();
-        blahActiveSet = new HashSet<>();
+        activeUserSet = new HashSet<>();
+        activeBlahSet = new HashSet<>();
 
-        utilityBlahInUser = new HashMap<>();
+        blahUtilMapPerUser = new HashMap<>();
 
         // for all blahs, aggregate all activities about it in userBlahStats
         // we could have loop through all users in the group, and aggregate group by blahs,
@@ -315,8 +255,7 @@ public class CohortWorker extends TimerTask{
             // if the blah doesn't have any activity, skip
             Iterator<DBObject> it = output.results().iterator();
             if (it.hasNext()) {
-                blahActiveSet.add(blahId);
-                blahActiveCount++;
+                activeBlahSet.add(blahId);
             }
             else continue;
 
@@ -325,20 +264,19 @@ public class CohortWorker extends TimerTask{
                 UserBlahInfo userBlahInfo = new UserBlahInfo(userBlahAggregation, blahId);
 
                 // if this is a new user, count it
-                if (!userActiveSet.contains(userBlahInfo.userId)) {
-                    userActiveSet.add(userBlahInfo.userId.toString());
-                    userActiveCount++;
+                if (!activeUserSet.contains(userBlahInfo.userId)) {
+                    activeUserSet.add(userBlahInfo.userId.toString());
                 }
 
                 double util = computeUtility(userBlahInfo);
 
                 // utilityBlah : blahId -> utility
-                HashMap<String, Double> utilityBlah = utilityBlahInUser.get(userBlahInfo.userId);
+                HashMap<String, Double> utilityBlah = blahUtilMapPerUser.get(userBlahInfo.userId);
                 // if this is the first blah for this user, create the blahId -> utility hashmap for him
                 if (utilityBlah == null) {
                     utilityBlah = new HashMap<>();
                     utilityBlah.put(blahId, util);
-                    utilityBlahInUser.put(userBlahInfo.userId.toString(), utilityBlah);
+                    blahUtilMapPerUser.put(userBlahInfo.userId.toString(), utilityBlah);
                 } else {
                     utilityBlah.put(blahId, util);
                 }
@@ -348,17 +286,17 @@ public class CohortWorker extends TimerTask{
 
     private AggregationOutput blahAggregation(String blahId) {
         // match blahId, group by userId, sum activities
-        BasicDBObject match = new BasicDBObject("$match", new BasicDBObject(DBConstants.UserBlahStats.BLAH_ID, new ObjectId(blahId)));
+        BasicDBObject match = new BasicDBObject("$match", new BasicDBObject(DBConst.UserBlahStats.BLAH_ID, new ObjectId(blahId)));
 
-        BasicDBObject groupFields = new BasicDBObject("_id", "$"+DBConstants.UserBlahStats.USER_ID);
-        groupFields.append(DBConstants.UserBlahStats.VIEWS, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.VIEWS));
-        groupFields.append(DBConstants.UserBlahStats.OPENS, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.OPENS));
-        groupFields.append(DBConstants.UserBlahStats.COMMENTS, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.COMMENTS));
-        groupFields.append(DBConstants.UserBlahStats.PROMOTION, new BasicDBObject("$sum", "$"+DBConstants.UserBlahStats.PROMOTION));
+        BasicDBObject groupFields = new BasicDBObject("_id", "$"+ DBConst.UserBlahStats.USER_ID);
+        groupFields.append(DBConst.UserBlahStats.VIEWS, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.VIEWS));
+        groupFields.append(DBConst.UserBlahStats.OPENS, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.OPENS));
+        groupFields.append(DBConst.UserBlahStats.COMMENTS, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.COMMENTS));
+        groupFields.append(DBConst.UserBlahStats.PROMOTION, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.PROMOTION));
         BasicDBObject group = new BasicDBObject("$group", groupFields);
 
         List<DBObject> pipeline = Arrays.asList(match, group);
-        return userBlahStatsCol.aggregate(pipeline);
+        return db.getUserBlahStatsCol().aggregate(pipeline);
     }
 
     private class UserBlahInfo {
@@ -375,13 +313,13 @@ public class CohortWorker extends TimerTask{
             this.blahId = new ObjectId(blahId);
 
             Integer obj;
-            obj = (Integer) userBlahAggregation.get(DBConstants.UserBlahStats.VIEWS);
+            obj = (Integer) userBlahAggregation.get(DBConst.UserBlahStats.VIEWS);
             views = obj == null ? 0 : obj;
-            obj = (Integer) userBlahAggregation.get(DBConstants.UserBlahStats.OPENS);
+            obj = (Integer) userBlahAggregation.get(DBConst.UserBlahStats.OPENS);
             opens = obj == null ? 0 : obj;
-            obj = (Integer) userBlahAggregation.get(DBConstants.UserBlahStats.COMMENTS);
+            obj = (Integer) userBlahAggregation.get(DBConst.UserBlahStats.COMMENTS);
             comments = obj == null ? 0 : obj;
-            obj = (Integer) userBlahAggregation.get(DBConstants.UserBlahStats.PROMOTION);
+            obj = (Integer) userBlahAggregation.get(DBConst.UserBlahStats.PROMOTION);
             promotion = obj == null ? 0 : obj;
         }
     }
@@ -401,24 +339,24 @@ public class CohortWorker extends TimerTask{
     private void indexActiveBlah() throws Exception {
         activeBlahIdIndexMap = new HashMap<>();
         int idx = 0;
-        for (String blahId : blahActiveSet) {
+        for (String blahId : activeBlahSet) {
             activeBlahIdIndexMap.put(blahId, idx);
             idx++;
         }
         // check numbers are correct
-        if (activeBlahIdIndexMap.size() != blahActiveCount) throw new Exception(" Error: active blah number inconsistent!");
+        if (activeBlahIdIndexMap.size() != activeBlahSet.size()) throw new Exception(" Error: active blah number inconsistent!");
     }
 
     private double[][] getInterestMatrix() {
         // default set to 0
         // only use active blah to do clustering
-        data = new double[userCount][blahActiveCount];
+        double[][] data = new double[userIdIndexMap.size()][activeBlahSet.size()];
 
         // for each user
-        for (String userId : utilityBlahInUser.keySet()) {
+        for (String userId : blahUtilMapPerUser.keySet()) {
             // put user-blah utility into vectors
             // utilityBlah : (blahId -> utility)
-            HashMap<String, Double> utilityBlah = utilityBlahInUser.get(userId);
+            HashMap<String, Double> utilityBlah = blahUtilMapPerUser.get(userId);
             // for each blah that the user interacted with
             for (String blahId : utilityBlah.keySet()) {
                 // check data consistency:
@@ -434,11 +372,11 @@ public class CohortWorker extends TimerTask{
     private void trivialClustering() {
         System.out.print(servicePrefix + groupPrefix + " trivial clustering...");
 
-        NUM_COHORTS = 1;
-        cluster = new ArrayList[userCount];
+        numCohorts = 1;
+        cluster = new ArrayList[userIdIndexMap.size()];
 
         // assign all users to the same cohort
-        for (int u = 0; u < userCount; u++) {
+        for (int u = 0; u < userIdIndexMap.size(); u++) {
             cluster[u] = new ArrayList<>();
             cluster[u].add(0);
         }
@@ -447,11 +385,11 @@ public class CohortWorker extends TimerTask{
 
     private void randomClustering() {
         System.out.print(servicePrefix + groupPrefix + " random clustering...");
-        cluster = new ArrayList[userCount];
+        cluster = new ArrayList[userIdIndexMap.size()];
         Random rand = new Random();
-        for (int u = 0; u < userCount; u++) {
+        for (int u = 0; u < userIdIndexMap.size(); u++) {
             cluster[u] = new ArrayList<>();
-            for (int i = 0; i < NUM_COHORTS; i++) {
+            for (int i = 0; i < numCohorts; i++) {
                 if (rand.nextBoolean()) {
                     cluster[u].add(i);
                 }
@@ -464,11 +402,11 @@ public class CohortWorker extends TimerTask{
         System.out.println("done");
     }
 
-    private void kmeansClustering() throws Exception {
+    private void kmeansClustering(double[][] data) throws Exception {
         System.out.print(servicePrefix + groupPrefix + " k-means clustering...");
         // k-means to cluster users
         int[] kmeansResult;
-        kmeansResult = KMeansClustering.run(data, NUM_COHORTS);
+        kmeansResult = KMeansClustering.run(data, numCohorts);
         if (kmeansResult == null) {
             throw new Exception("Error : k-means return null");
         }
@@ -483,10 +421,10 @@ public class CohortWorker extends TimerTask{
         System.out.println("done");
     }
 
-    private void outputResearchFiles() {
+    private void outputResearchFiles(double[][] data) {
         //long version = new Date().getTime() / 1000;
         String version = "";
-        String dataFileName = "research/" + version + "data_" + groupName.toLowerCase().replace(' ','_') + ".csv";
+        String dataFileName = "research/" + version + "data_" + groupNames.get(groupId).toLowerCase().replace(' ', '_') + ".csv";
 
         try {
             FileWriter writer = new FileWriter(dataFileName);
@@ -512,8 +450,8 @@ public class CohortWorker extends TimerTask{
     // cluster input : userIndex -> list of clusterIndex
     private void generateCohortHashMaps() {
         // generate cohortIndex->cohortId map
-        cohortIndexIdMap = new String[NUM_COHORTS];
-        for (int c = 0; c < NUM_COHORTS; c++) {
+        cohortIndexIdMap = new String[numCohorts];
+        for (int c = 0; c < numCohorts; c++) {
             cohortIndexIdMap[c] = new ObjectId().toString();
         }
 
@@ -530,7 +468,7 @@ public class CohortWorker extends TimerTask{
 
         // cohortId -> list of userId
         userPerCohort = new HashMap<>();
-        for (int c = 0; c < NUM_COHORTS; c++) {
+        for (int c = 0; c < numCohorts; c++) {
             userPerCohort.put(cohortIndexIdMap[c], new ArrayList<>());
         }
         // add userId
@@ -541,76 +479,21 @@ public class CohortWorker extends TimerTask{
                 userPerCohort.get(cohortId).add(userId);
             }
         }
-
     }
 
-    // map cohorts to previous generation of cohorts
-    // not used for now
-    private void buildCohortMapping() {
-        // get userId list for each cohort in previous generation
-        HashMap<String, List<String>> prevUserPerCohort = new HashMap<String, List<String>>();
-        // get previous generation id
-        DBObject groupDoc = groupsCol.findOne(new BasicDBObject("_id", new ObjectId(groupId)));
-        String prevGenId = (String) groupDoc.get("CG");
-        // get previous generation cohortId set
-        DBObject cohortGens = (DBObject)groupDoc.get("CHG");
-        DBObject genDoc = (DBObject) cohortGens.get(prevGenId);
-        DBObject cohortInfo = (DBObject) genDoc.get("CHI");
-        Set<String> prevCohortIdSet = cohortInfo.keySet();
-        // get previous generation cohort-ser map
-        for (String cohorId : prevCohortIdSet) {
-            BasicDBObject cohortDoc = (BasicDBObject) cohortInfoCol.findOne(new BasicDBObject("_id", new ObjectId(cohorId)));
-            prevUserPerCohort.put(cohorId, (List<String>) cohortDoc.get("U"));
-        }
-        // map each new cohort to one of the cohort in previous generation, or null
-        for (String cohortId : userPerCohort.keySet()) {
-            List<String> userIdList = userPerCohort.get(cohortId);
-            Set<String> userIdSet = new HashSet<String>(userIdList);
-            boolean foundParent = false;
-            for (String prevCohortId : prevUserPerCohort.keySet()) {
-                List<String> prevUserIdList = prevUserPerCohort.get(prevCohortId);
-                int common = countCommonUser(userIdSet, prevUserIdList);
-                if ((double)common / userIdList.size() > sameCohortThreshold && (double)common / prevUserIdList.size() > sameCohortThreshold) {
-                    cohortMapping.put(cohortId, prevCohortId);
-                    foundParent = true;
-                    break;
-                }
-            }
-            if (!foundParent) {
-                cohortMapping.put(cohortId, null);
-            }
-        }
-    }
-
-    private int countCommonUser(Set<String> setA, List<String> B) {
-        int count = 0;
-        for (String b : B) {
-            if (setA.contains(b)) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private void outputCohortToMongo() {
+    private void updateMongoAndQueue() throws Exception {
 
         // insert cohort information into infodb.cohortInfo
         insertCohortInfo();
 
         // insert cohort generation info into infodb.generationInfo
-        ObjectId generationIdObj = insertGenerationInfo();
+        String generationId = insertGenerationInfo();
 
-        // write user's cohort info into infodb.usreGroupInfo "next generation cohort"
-        updateUserNextCohortInfo();
+        // write user's cohort info into infodb.usreGroupInfo
+        updateUserGroupInfo(generationId);
 
-        // write group next generation Id
-        // the ID will be copied to "current generation id" after first set of inboxes are generated
-        updateGroupNextGenId(generationIdObj);
-
-        // notice, update userGroupInfo.CH after the first set of inboxes are generated by inboxer
-        if (OUTPUT_COHORT_INFO_FOR_TEST) {
-            updateUserCohortInfo();
-        }
+        // produce "compute all blah and user strength in this group" task and enqueue
+        produceStrengthTask(generationId);
     }
 
     private void insertCohortInfo() {
@@ -620,31 +503,31 @@ public class CohortWorker extends TimerTask{
             List<String> userIdList = userPerCohort.get(cohortId);
 
             BasicDBObject cohortInfo = new BasicDBObject();
-            cohortInfo.put(DBConstants.CohortInfo.ID, new ObjectId(cohortId));
-            cohortInfo.put(DBConstants.CohortInfo.NUM_USERS, (long)userIdList.size());
+            cohortInfo.put(DBConst.CohortInfo.ID, new ObjectId(cohortId));
+            cohortInfo.put(DBConst.CohortInfo.NUM_USERS, (long)userIdList.size());
             // we could add user list for each cohort, but it this necessary?
 //            cohortInfo.put(DBConstants.CohortInfo.USER_LIST, convertIdList(userIdList));
 
-            cohortInfoCol.insert(cohortInfo);
+            db.getCohortInfoCol().insert(cohortInfo);
         }
         System.out.println("done");
     }
 
-    private ObjectId insertGenerationInfo() {
+    private String insertGenerationInfo() {
         System.out.print(servicePrefix + groupPrefix + " write new generation information to database...");
 
         BasicDBObject cohortInfoDoc = new BasicDBObject();
         for (String cohortId : cohortIndexIdMap) {
-            BasicDBObject defaultInbox = new BasicDBObject(DBConstants.GenerationInfo.FIRST_INBOX, -1L);
-            defaultInbox.append(DBConstants.GenerationInfo.LAST_INBOX, -1L);
+            BasicDBObject defaultInbox = new BasicDBObject(DBConst.GenerationInfo.FIRST_INBOX, -1L);
+            defaultInbox.append(DBConst.GenerationInfo.LAST_INBOX, -1L);
             cohortInfoDoc.put(cohortId, defaultInbox); // cohortId as keys
         }
         ObjectId generationIdObj = new ObjectId();
-        BasicDBObject generationDoc = new BasicDBObject(DBConstants.GenerationInfo.ID, generationIdObj);
-        generationDoc.put(DBConstants.GenerationInfo.CREATE_TIME, new Date());
-        generationDoc.put(DBConstants.GenerationInfo.GROUP_ID, new ObjectId(groupId));
-        generationDoc.put(DBConstants.GenerationInfo.COHORT_INFO, cohortInfoDoc);
-        generationInfoCol.insert(generationDoc);
+        BasicDBObject generationDoc = new BasicDBObject(DBConst.GenerationInfo.ID, generationIdObj);
+        generationDoc.put(DBConst.GenerationInfo.CREATE_TIME, new Date());
+        generationDoc.put(DBConst.GenerationInfo.GROUP_ID, new ObjectId(groupId));
+        generationDoc.put(DBConst.GenerationInfo.COHORT_INFO, cohortInfoDoc);
+        db.getGenerationInfoCol().insert(generationDoc);
 
         System.out.println("done");
 
@@ -653,41 +536,19 @@ public class CohortWorker extends TimerTask{
 //            System.out.println("\tcohort id : " + cohortId);
 //        }
 
-        return generationIdObj;
+        return generationIdObj.toString();
     }
 
-    private void updateUserNextCohortInfo() {
-        System.out.print(servicePrefix + groupPrefix + " write next generation cohort information to userGroupInfo ...");
+    private void updateUserGroupInfo(String generationId) {
+        System.out.print(servicePrefix + groupPrefix + " write cohort information to userGroupInfo ...");
 
         for (String userId : cohortPerUser.keySet()) {
             List<String> cohortIdList = cohortPerUser.get(userId);
 
-            BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(userId)).append(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
-            BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.UserGroupInfo.NEXT_COHORT_LIST, convertIdList(cohortIdList)));
-            userGroupInfoCol.update(query, setter);
+            BasicDBObject query = new BasicDBObject(DBConst.UserGroupInfo.USER_ID, new ObjectId(userId)).append(DBConst.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
+            BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConst.UserGroupInfo.COHORT_GENERATIONS + "." + generationId, convertIdList(cohortIdList)));
+            db.getUserGroupInfoCol().update(query, setter);
         }
-        System.out.println("done");
-    }
-
-    private void updateGroupNextGenId(ObjectId generationIdObj) {
-        System.out.print(servicePrefix + groupPrefix + " write next generation id into group '" + groupName + "' ...");
-        BasicDBObject query = new BasicDBObject(DBConstants.Groups.ID, new ObjectId(groupId));
-        BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.Groups.NEXT_GENERATION, generationIdObj));
-        groupsCol.update(query, setter);
-        System.out.println("done");
-    }
-
-    private void updateUserCohortInfo() {
-        System.out.print(servicePrefix + groupPrefix + "[ write cohort information to userGroupInfo for testing...");
-
-        for (String userId : cohortPerUser.keySet()) {
-            List<String> cohortIdList = cohortPerUser.get(userId);
-
-            BasicDBObject query = new BasicDBObject(DBConstants.UserGroupInfo.USER_ID, new ObjectId(userId)).append(DBConstants.UserGroupInfo.GROUP_ID, new ObjectId(groupId));
-            BasicDBObject setter = new BasicDBObject("$set", new BasicDBObject(DBConstants.UserGroupInfo.CURRENT_COHORT_LIST, convertIdList(cohortIdList)));
-            userGroupInfoCol.update(query, setter);
-        }
-
         System.out.println("done");
     }
 
@@ -699,55 +560,18 @@ public class CohortWorker extends TimerTask{
         return objlist;
     }
 
-    private void produceStrengthTask() throws Exception {
+    private void produceStrengthTask(String generationId) throws Exception {
         System.out.print(servicePrefix + groupPrefix + " produce strength task : COMPUTE_ALL_STRENGTH...");
 
         BasicDBObject task = new BasicDBObject();
-        task.put(AzureConstants.StrengthTask.TYPE, AzureConstants.StrengthTask.COMPUTE_ALL_STRENGTH);
-        task.put(AzureConstants.StrengthTask.GROUP_ID, groupId);
+        task.put(AzureConst.StrengthTask.TYPE, AzureConst.StrengthTask.COMPUTE_ALL_STRENGTH);
+        task.put(AzureConst.StrengthTask.GROUP_ID, groupId);
+        task.put(AzureConst.StrengthTask.GENERATION_ID, generationId);
 
         // enqueue
         CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
-        strengthTaskQueue.addMessage(message);
+        azure.getStrengthTaskQueue().addMessage(message);
 
-        System.out.println("done");
-    }
-
-    private void initializeQueue() throws Exception {
-        System.out.print(servicePrefix +"initialize Azure Storage Queue service...");
-
-        // Retrieve storage account from connection-string.
-        CloudStorageAccount storageAccount =
-                CloudStorageAccount.parse(AzureConstants.STORAGE_CONNECTION_STRING);
-
-        // Create the queue client.
-        queueClient = storageAccount.createCloudQueueClient();
-
-        // Retrieve a reference to a queue.
-        strengthTaskQueue = queueClient.getQueueReference(AzureConstants.STRENGTH_TASK_QUEUE);
-
-        // Create the queue if it doesn't already exist.
-        strengthTaskQueue.createIfNotExists();
-
-        System.out.println("done");
-    }
-
-    private void writeFakeBlahCohortStrength() {
-        System.out.print("Writing fake cohort-strength to blahs...");
-        DBCursor cursor = blahInfoCol.find(new BasicDBObject("G", groupId));
-
-        while (cursor.hasNext()) {
-            BasicDBObject blah = (BasicDBObject) cursor.next();
-            BasicDBObject cohortStrength = (BasicDBObject) blah.get("CHS");
-            if (cohortStrength == null) {
-                cohortStrength = new BasicDBObject();
-                blah.put("CHS", cohortStrength);
-            }
-            for (String cohortId : cohortIndexIdMap) {
-                cohortStrength.put(cohortId, Math.random()/2);
-            }
-            blahInfoCol.save(blah);
-        }
         System.out.println("done");
     }
 }

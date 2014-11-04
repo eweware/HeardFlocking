@@ -1,44 +1,54 @@
-package com.eweware.heardflocking.inbox;
+package com.eweware.heardflocking.cohort;
 
+import com.eweware.heardflocking.*;
 import com.eweware.heardflocking.base.AzureConst;
 import com.eweware.heardflocking.base.DBConst;
-import com.eweware.heardflocking.ServiceProperties;
 import com.eweware.heardflocking.base.HeardAzure;
 import com.eweware.heardflocking.base.HeardDB;
 import com.microsoft.azure.storage.StorageException;
 import com.microsoft.azure.storage.queue.CloudQueueMessage;
-import com.mongodb.*;
+import com.mongodb.BasicDBObject;
+import com.mongodb.Cursor;
+import com.mongodb.DBCursor;
 import com.mongodb.util.JSON;
-import org.bson.types.ObjectId;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Created by weihan on 10/28/14.
+ * Created by weihan on 11/3/14.
  */
-public class InboxMonitor extends TimerTask {
-    private String servicePrefix = "[InboxMonitor] ";
+public class CohortMonitor extends TimerTask {
+    private String servicePrefix = "[CohortMonitor] ";
 
     public static void execute(HeardDB db, HeardAzure azure) {
         Timer timer = new Timer();
         Calendar cal = Calendar.getInstance();
 
         // set time to run
-//        cal.set(Calendar.HOUR_OF_DAY, 0);
+        cal.set(Calendar.HOUR_OF_DAY, ServiceProperties.CohortMonitor.START_HOUR);
         cal.set(Calendar.MINUTE, 0);
         cal.set(Calendar.SECOND, 0);
         cal.set(Calendar.MILLISECOND, 0);
 
         // set period
-        int PERIOD_HOURS = ServiceProperties.InboxMonitor.PERIOD_HOURS;
+        int periodHours = ServiceProperties.CohortMonitor.PERIOD_HOURS;
+        System.out.println("[CohortMonitor] start running, period=" + periodHours + " (minutes), time : "  + new Date());
 
-        System.out.println("[InboxMonitor] start running, period=" + PERIOD_HOURS + " (hours), time : "  + new Date());
-
-        timer.schedule(new InboxMonitor(db, azure, cal.getTime(), PERIOD_HOURS), cal.getTime(), TimeUnit.HOURS.toMillis(PERIOD_HOURS));
+        timer.schedule(new CohortMonitor(db, azure, cal.getTime(), periodHours), cal.getTime(), TimeUnit.HOURS.toMillis(periodHours));
     }
 
-    public InboxMonitor(HeardDB db, HeardAzure azure, Date startTime, int periodHours) {
+    private HeardDB db;
+    private HeardAzure azure;
+
+    private Date startTime;
+    private int periodHours;
+
+    private HashMap<String, String> groupNames;
+
+    private boolean TEST_ONLY_TECH = ServiceProperties.TEST_ONLY_TECH;
+
+    public CohortMonitor(HeardDB db, HeardAzure azure, Date startTime, int periodHours) {
         this.db = db;
         this.azure = azure;
         this.startTime = startTime;
@@ -46,23 +56,10 @@ public class InboxMonitor extends TimerTask {
         getGroups();
     }
 
-    private HeardDB db;
-    private HeardAzure azure;
-    private final Date startTime;
-    private int periodHours;
-
-    private HashMap<String, String> groupNames;
-
-    private final boolean TEST_ONLY_TECH = ServiceProperties.TEST_ONLY_TECH;
-
-
     @Override
     public void run() {
         try {
-            System.out.println(startTime);
-
             scanGroups();
-
             printFinishInfo();
         }
         catch (Exception e) {
@@ -92,50 +89,47 @@ public class InboxMonitor extends TimerTask {
 
             if (TEST_ONLY_TECH && !groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
 
-            System.out.print(servicePrefix + "check group " + groupNames.get(groupId) + "' ... ");
 
-            if (groupNeedNewInbox(group)) {
-                String generationId = getCurrentGeneration(groupId);
-                produceInboxTask(groupId, generationId);
+            String groupPrefix = "[" + groupNames.get(groupId) + "]";
+            System.out.print(servicePrefix + groupPrefix + " check need for re-clustering : ");
+
+            if (groupNeedReclustering(group)) {
+                System.out.println("YES");
+                produceCohortTask(groupId);
             }
             else {
-                System.out.println("inactive, passed");
+                System.out.println("NO");
             }
         }
         cursor.close();
         System.out.println();
-        System.out.println(servicePrefix + "finish group scanning\n");
+        System.out.println(servicePrefix + "group scanning finished\n");
     }
 
-
-    private String getCurrentGeneration(String groupId) {
-        BasicDBObject query = new BasicDBObject(DBConst.Groups.ID, new ObjectId(groupId));
-        BasicDBObject group = (BasicDBObject) db.getGroupsCol().findOne(query);
-        return group.getString(DBConst.Groups.CURRENT_GENERATION);
-    }
-
-    private boolean groupNeedNewInbox(BasicDBObject group) {
+    private boolean groupNeedReclustering(BasicDBObject group) {
         return true;
     }
 
-    private void produceInboxTask(String groupId, String generationId) throws StorageException {
-        System.out.print("active, produce task : RECLUSTER... ");
+    private void produceCohortTask(String groupId) throws StorageException {
+        String groupPrefix = "[" + groupNames.get(groupId) + "] ";
+        System.out.print(servicePrefix + groupPrefix + "produce cohort task... ");
 
         // produce inbox generation task
         BasicDBObject task = new BasicDBObject();
-        task.put(AzureConst.InboxTask.TYPE, AzureConst.InboxTask.GENERATE_INBOX);
-        task.put(AzureConst.InboxTask.GROUP_ID, groupId);
-        task.put(AzureConst.InboxTask.GENERATION_ID, generationId);
+        task.put(AzureConst.CohortTask.TYPE, AzureConst.CohortTask.RECLUSTER);
+        task.put(AzureConst.CohortTask.GROUP_ID, groupId);
 
         // enqueue
         CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
-        azure.getInboxTaskQueue().addMessage(message);
+        azure.getCohortTaskQueue().addMessage(message);
         System.out.println("done");
     }
+
     private void printFinishInfo() {
         Calendar nextTime = Calendar.getInstance();
         nextTime.setTime(startTime);
         nextTime.add(Calendar.HOUR, periodHours);
+
         System.out.println(servicePrefix + "next scan in less than " + periodHours + " hours at time : " + nextTime.getTime());
     }
 }

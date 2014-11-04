@@ -1,9 +1,9 @@
-package com.eweware.heardflocking;
+package com.eweware.heardflocking.base;
 
 /**
  * Created by weihan on 10/22/14.
  */
-public interface DBConstants {
+public interface DBConst {
 
     public final String DEV_DB_SERVER = "localhost";
     public final String QA_DB_SERVER = "qa.db.blahgua.com";
@@ -40,8 +40,7 @@ public interface DBConstants {
         public static final String ID = "_id";
         public static final String USER_ID = "U";
         public static final String GROUP_ID = "G";
-        public static final String CURRENT_COHORT_LIST = "CH";
-        public static final String NEXT_COHORT_LIST = "CHN";
+        public static final String COHORT_GENERATIONS = "CHG";
         public static final String STRENGTH_UPDATE_TIME = "Su";
         public static final String STRENGTH = "S";
 
