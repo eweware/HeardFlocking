@@ -21,7 +21,10 @@ public class ServiceProperties {
         public static double WEIGHT_VIEW;
         public static double WEIGHT_OPEN;
         public static double WEIGHT_COMMENT;
-        public static double WEIGHT_PROMOTION;
+        public static double WEIGHT_UPVOTES;
+        public static double WEIGHT_DOWNVOTES;
+        public static double WEIGHT_COMMENT_UPVOTES;
+        public static double WEIGHT_COMMENT_DOWNVOTES;
 
         public static int RECENT_BLAH_DAYS;
     }
@@ -41,7 +44,10 @@ public class ServiceProperties {
         public static double WEIGHT_VIEW;
         public static double WEIGHT_OPEN;
         public static double WEIGHT_COMMENT;
-        public static double WEIGHT_PROMOTION;
+        public static double WEIGHT_UPVOTES;
+        public static double WEIGHT_DOWNVOTES;
+        public static double WEIGHT_COMMENT_UPVOTES;
+        public static double WEIGHT_COMMENT_DOWNVOTES;
     }
 
     public static class InboxMonitor {

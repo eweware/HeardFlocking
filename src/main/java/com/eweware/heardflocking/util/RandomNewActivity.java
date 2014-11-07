@@ -170,7 +170,7 @@ public class RandomNewActivity {
                     db.getUserGroupInfoCol().update(queryUserGroup, inc);
 
                     //long threadId = Thread.currentThread().getId();
-                    System.out.println(servicePrefix + groupPrefix + " [user] " + userIdObj.toString() + " add new activity");
+                    System.out.println(servicePrefix + groupPrefix + "[user] " + userIdObj.toString() + " add new activity");
 
                     // wait for a bit
                     Thread.sleep(USER_WAIT_MILLIS);

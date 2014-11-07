@@ -157,7 +157,10 @@ public class Main {
         ServiceProperties.CohortWorker.WEIGHT_VIEW = Double.parseDouble(prop.getProperty("cw.weight_view", "1.0"));
         ServiceProperties.CohortWorker.WEIGHT_OPEN = Double.parseDouble(prop.getProperty("cw.weight_open", "2.0"));
         ServiceProperties.CohortWorker.WEIGHT_COMMENT = Double.parseDouble(prop.getProperty("cw.weight_comment", "5.0"));
-        ServiceProperties.CohortWorker.WEIGHT_PROMOTION = Double.parseDouble(prop.getProperty("cw.weight_promotion", "10.0"));
+        ServiceProperties.CohortWorker.WEIGHT_UPVOTES = Double.parseDouble(prop.getProperty("cw.weight_upvotes", "10.0"));
+        ServiceProperties.CohortWorker.WEIGHT_DOWNVOTES = Double.parseDouble(prop.getProperty("cw.weight_downvotes", "-10.0"));
+        ServiceProperties.CohortWorker.WEIGHT_COMMENT_UPVOTES = Double.parseDouble(prop.getProperty("cw.weight_comment_upvotes", "5.0"));
+        ServiceProperties.CohortWorker.WEIGHT_COMMENT_DOWNVOTES = Double.parseDouble(prop.getProperty("cw.weight_comment_downvotes", "-5.0"));
     }
 
     private void getPropStrengthMonitor(Properties prop) {
@@ -173,7 +176,10 @@ public class Main {
         ServiceProperties.StrengthWorker.WEIGHT_VIEW = Double.parseDouble(prop.getProperty("sw.weight_view", "1.0"));
         ServiceProperties.StrengthWorker.WEIGHT_OPEN = Double.parseDouble(prop.getProperty("sw.weight_open", "2.0"));
         ServiceProperties.StrengthWorker.WEIGHT_COMMENT = Double.parseDouble(prop.getProperty("sw.weight_comment", "5.0"));
-        ServiceProperties.StrengthWorker.WEIGHT_PROMOTION = Double.parseDouble(prop.getProperty("sw.weight_promotion", "10.0"));
+        ServiceProperties.StrengthWorker.WEIGHT_UPVOTES = Double.parseDouble(prop.getProperty("sw.weight_upvotes", "10.0"));
+        ServiceProperties.StrengthWorker.WEIGHT_DOWNVOTES = Double.parseDouble(prop.getProperty("sw.weight_downvotes", "-10.0"));
+        ServiceProperties.StrengthWorker.WEIGHT_COMMENT_UPVOTES = Double.parseDouble(prop.getProperty("sw.weight_comment_upvotes", "5.0"));
+        ServiceProperties.StrengthWorker.WEIGHT_COMMENT_DOWNVOTES = Double.parseDouble(prop.getProperty("sw.weight_comment_downvotes", "-5.0"));
     }
 
     private void getPropInboxMonitor(Properties prop) {

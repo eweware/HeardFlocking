@@ -43,7 +43,10 @@ public class StrengthWorker {
     final double wV = ServiceProperties.StrengthWorker.WEIGHT_VIEW;
     final double wO = ServiceProperties.StrengthWorker.WEIGHT_OPEN;
     final double wC = ServiceProperties.StrengthWorker.WEIGHT_COMMENT;
-    final double wP = ServiceProperties.StrengthWorker.WEIGHT_PROMOTION;
+    final double wP = ServiceProperties.StrengthWorker.WEIGHT_UPVOTES;
+    final double wN = ServiceProperties.StrengthWorker.WEIGHT_DOWNVOTES;
+    final double wCP = ServiceProperties.StrengthWorker.WEIGHT_COMMENT_UPVOTES;
+    final double wCN = ServiceProperties.StrengthWorker.WEIGHT_COMMENT_DOWNVOTES;
 
     private String servicePrefix = "[StrengthWorker] ";
 
@@ -239,7 +242,7 @@ public class StrengthWorker {
         groupFields.append(DBConst.UserBlahStats.VIEWS, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.VIEWS));
         groupFields.append(DBConst.UserBlahStats.OPENS, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.OPENS));
         groupFields.append(DBConst.UserBlahStats.COMMENTS, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.COMMENTS));
-        groupFields.append(DBConst.UserBlahStats.PROMOTION, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.PROMOTION));
+        groupFields.append(DBConst.UserBlahStats.COMMENT_UPVOTES, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.COMMENT_UPVOTES));
         BasicDBObject groupBy = new BasicDBObject("$group", groupFields);
 
         List<DBObject> pipeline = Arrays.asList(match, groupBy);
@@ -250,24 +253,33 @@ public class StrengthWorker {
         ObjectId blahId;
         ObjectId userId;
 
-        int views;
-        int opens;
-        int comments;
-        int promotion;
+        long views;
+        long opens;
+        long comments;
+        long upvotes;
+        long downvotes;
+        long commentUpvotes;
+        long commentDownvotes;
 
         private UserBlahInfo(DBObject userBlah, String blahId) {
             userId = (ObjectId) userBlah.get("_id");
             this.blahId = new ObjectId(blahId);
 
-            Integer obj;
-            obj = (Integer) userBlah.get(DBConst.UserBlahStats.VIEWS);
+            Long obj;
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.VIEWS);
             views = obj == null ? 0 : obj;
-            obj = (Integer) userBlah.get(DBConst.UserBlahStats.OPENS);
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.OPENS);
             opens = obj == null ? 0 : obj;
-            obj = (Integer) userBlah.get(DBConst.UserBlahStats.COMMENTS);
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENTS);
             comments = obj == null ? 0 : obj;
-            obj = (Integer) userBlah.get(DBConst.UserBlahStats.PROMOTION);
-            promotion = obj == null ? 0 : obj;
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENT_UPVOTES);
+            upvotes = obj == null ? 0 : obj;
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.DOWNVOTES);
+            downvotes = obj == null ? 0 : obj;
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENT_UPVOTES);
+            commentUpvotes = obj == null ? 0 : obj;
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENT_DOWNVOTES);
+            commentDownvotes = obj == null ? 0 : obj;
         }
     }
 
@@ -285,7 +297,10 @@ public class StrengthWorker {
         // if a user view a blah but didn't open, that's a sign for negative utility
         double util = userBlahInfo.opens * wO +
                 userBlahInfo.comments * wC +
-                userBlahInfo.promotion * wP -
+                userBlahInfo.upvotes * wP  +
+                userBlahInfo.downvotes * wN +
+                userBlahInfo.commentUpvotes * wCP +
+                userBlahInfo.commentDownvotes * wCN +
                 Math.signum(userBlahInfo.views) * wV;
         return util;
     }

@@ -37,7 +37,10 @@ public class CohortWorker{
     final double wV = ServiceProperties.CohortWorker.WEIGHT_VIEW;
     final double wO = ServiceProperties.CohortWorker.WEIGHT_OPEN;
     final double wC = ServiceProperties.CohortWorker.WEIGHT_COMMENT;
-    final double wP = ServiceProperties.CohortWorker.WEIGHT_PROMOTION;
+    final double wP = ServiceProperties.CohortWorker.WEIGHT_UPVOTES;
+    final double wN = ServiceProperties.CohortWorker.WEIGHT_DOWNVOTES;
+    final double wCP = ServiceProperties.CohortWorker.WEIGHT_COMMENT_UPVOTES;
+    final double wCN = ServiceProperties.CohortWorker.WEIGHT_COMMENT_DOWNVOTES;
 
     private final boolean CLUSTERING_RESEARCH = false;
     private final boolean ADD_MATURE_COHORT = false;
@@ -292,7 +295,7 @@ public class CohortWorker{
         groupFields.append(DBConst.UserBlahStats.VIEWS, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.VIEWS));
         groupFields.append(DBConst.UserBlahStats.OPENS, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.OPENS));
         groupFields.append(DBConst.UserBlahStats.COMMENTS, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.COMMENTS));
-        groupFields.append(DBConst.UserBlahStats.PROMOTION, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.PROMOTION));
+        groupFields.append(DBConst.UserBlahStats.COMMENT_UPVOTES, new BasicDBObject("$sum", "$"+ DBConst.UserBlahStats.COMMENT_UPVOTES));
         BasicDBObject group = new BasicDBObject("$group", groupFields);
 
         List<DBObject> pipeline = Arrays.asList(match, group);
@@ -303,24 +306,33 @@ public class CohortWorker{
         ObjectId blahId;
         ObjectId userId;
 
-        int views;
-        int opens;
-        int comments;
-        int promotion;
+        long views;
+        long opens;
+        long comments;
+        long upvotes;
+        long downvotes;
+        long commentUpvotes;
+        long commentDownvotes;
 
-        private UserBlahInfo(DBObject userBlahAggregation, String blahId) {
-            userId = (ObjectId) userBlahAggregation.get("_id");
+        private UserBlahInfo(DBObject userBlah, String blahId) {
+            userId = (ObjectId) userBlah.get("_id");
             this.blahId = new ObjectId(blahId);
 
-            Integer obj;
-            obj = (Integer) userBlahAggregation.get(DBConst.UserBlahStats.VIEWS);
+            Long obj;
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.VIEWS);
             views = obj == null ? 0 : obj;
-            obj = (Integer) userBlahAggregation.get(DBConst.UserBlahStats.OPENS);
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.OPENS);
             opens = obj == null ? 0 : obj;
-            obj = (Integer) userBlahAggregation.get(DBConst.UserBlahStats.COMMENTS);
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENTS);
             comments = obj == null ? 0 : obj;
-            obj = (Integer) userBlahAggregation.get(DBConst.UserBlahStats.PROMOTION);
-            promotion = obj == null ? 0 : obj;
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.UPVOTES);
+            upvotes = obj == null ? 0 : obj;
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.DOWNVOTES);
+            downvotes = obj == null ? 0 : obj;
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENT_UPVOTES);
+            commentUpvotes = obj == null ? 0 : obj;
+            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENT_DOWNVOTES);
+            commentDownvotes = obj == null ? 0 : obj;
         }
     }
 
@@ -331,7 +343,10 @@ public class CohortWorker{
         // if a user view a blah but didn't open, that's a sign for negative utility
         double util = userBlahInfo.opens * wO +
                 userBlahInfo.comments * wC +
-                userBlahInfo.promotion * wP -
+                userBlahInfo.upvotes * wP  +
+                userBlahInfo.downvotes * wN +
+                userBlahInfo.commentUpvotes * wCP +
+                userBlahInfo.commentDownvotes * wCN +
                 Math.signum(userBlahInfo.views) * wV;
         return util;
     }

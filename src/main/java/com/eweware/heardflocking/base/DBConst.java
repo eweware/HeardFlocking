@@ -22,10 +22,10 @@ public interface DBConst {
         public static final String NEW_VIEWS = "V";
         public static final String NEW_OPENS = "O";
         public static final String NEW_COMMENTS = "C";
-        public static final String NEW_UPVOTES = "U";
-        public static final String NEW_DOWNVOTES = "D";
-        public static final String NEW_COMMENT_UPVOTES = "CU";
-        public static final String NEW_COMMENT_DOWNVOTES = "CD";
+        public static final String NEW_UPVOTES = "P";
+        public static final String NEW_DOWNVOTES = "N";
+        public static final String NEW_COMMENT_UPVOTES = "CP";
+        public static final String NEW_COMMENT_DOWNVOTES = "CN";
 
         public static final String NEXT_CHECK_TIME = "k";
 
@@ -48,10 +48,10 @@ public interface DBConst {
         public static final String NEW_VIEWS = "V";
         public static final String NEW_OPENS = "O";
         public static final String NEW_COMMENTS = "C";
-        public static final String NEW_UPVOTES = "U";
-        public static final String NEW_DOWNVOTES = "D";
-        public static final String NEW_COMMENT_UPVOTES = "CU";
-        public static final String NEW_COMMENT_DOWNVOTES = "CD";
+        public static final String NEW_UPVOTES = "P";
+        public static final String NEW_DOWNVOTES = "N";
+        public static final String NEW_COMMENT_UPVOTES = "CP";
+        public static final String NEW_COMMENT_DOWNVOTES = "CN";
 
         public static final String NEXT_CHECK_TIME = "k";
     }
@@ -59,7 +59,7 @@ public interface DBConst {
     public interface CohortInfo {
         public static final String ID = "_id";
         public static final String NUM_USERS = "N";
-        public static final String USER_LIST = "U";
+//        public static final String USER_LIST = "U";
     }
 
     public interface GenerationInfo {
@@ -81,7 +81,10 @@ public interface DBConst {
         public static final String VIEWS = "V";
         public static final String OPENS = "O";
         public static final String COMMENTS = "C";
-        public static final String PROMOTION = "P";
+        public static final String UPVOTES = "P";
+        public static final String DOWNVOTES = "N";
+        public static final String COMMENT_UPVOTES = "CP";
+        public static final String COMMENT_DOWNVOTES = "CN";
     }
 
     public interface Blahs {
@@ -93,7 +96,6 @@ public interface DBConst {
         public static final String ID = "_id";
         public static final String NAME = "N";
         public static final String CURRENT_GENERATION = "CG";
-        public static final String NEXT_GENERATION = "NG";
     }
 
 

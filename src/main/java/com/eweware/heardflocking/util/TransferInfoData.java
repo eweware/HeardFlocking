@@ -138,7 +138,7 @@ public class TransferInfoData {
 
     private void writeBlahInfo(BlahInfo blahInfo) {
         BasicDBObject values = new BasicDBObject();
-        values.put(DBConst.BlahInfo.ID, blahInfo.blahId);
+//        values.put(DBConst.BlahInfo.ID, blahInfo.blahId);
         values.put(DBConst.BlahInfo.AUTHOR_ID, blahInfo.authorId);
         values.put(DBConst.BlahInfo.GROUP_ID, blahInfo.groupId);
         values.put(DBConst.BlahInfo.CREATE_TIME, blahInfo.createTime);
@@ -195,14 +195,22 @@ public class TransferInfoData {
             views = userBlah.getInt("V", 0);
             opens = userBlah.getInt("O", 0);
             comments = userBlah.getInt("C", 0);
-            promotion = userBlah.getInt("P", 0);
+            if (userBlah.getInt("P", 0) == 1) {
+                upvotes = 1;
+            }
+            else if (userBlah.getInt("P", 0) == -1) {
+                downvotes = 1;
+            }
         }
         private ObjectId blahId;
         private ObjectId userId;
-        private int views;
-        private int opens;
-        private int comments;
-        private int promotion;
+        private long views;
+        private long opens;
+        private long comments;
+        private long upvotes;
+        private long downvotes;
+//        private long comment_upvotes;
+//        private long comment_downvotes;
     }
 
     private void writeUserBlahInfoToStats(UserBlahInfo userBlahInfo) {
@@ -212,7 +220,10 @@ public class TransferInfoData {
         if (userBlahInfo.views > 0) values.put(DBConst.UserBlahStats.VIEWS, userBlahInfo.views);
         if (userBlahInfo.opens > 0) values.put(DBConst.UserBlahStats.OPENS, userBlahInfo.opens);
         if (userBlahInfo.comments > 0) values.put(DBConst.UserBlahStats.COMMENTS, userBlahInfo.comments);
-        if (userBlahInfo.promotion > 0) values.put(DBConst.UserBlahStats.PROMOTION, userBlahInfo.promotion);
+        if (userBlahInfo.upvotes > 0) values.put(DBConst.UserBlahStats.UPVOTES, userBlahInfo.upvotes);
+        if (userBlahInfo.downvotes > 0) values.put(DBConst.UserBlahStats.DOWNVOTES, userBlahInfo.downvotes);
+//        if (userBlahInfo.comment_upvotes > 0) values.put(DBConst.UserBlahStats.COMMENT_UPVOTES, userBlahInfo.comment_upvotes);
+//        if (userBlahInfo.comment_downvotes > 0) values.put(DBConst.UserBlahStats.COMMENT_DOWNVOTES, userBlahInfo.comment_downvotes);
 
         // a fake time point for old data
         values.put(DBConst.UserBlahStats.YEAR, 0);
