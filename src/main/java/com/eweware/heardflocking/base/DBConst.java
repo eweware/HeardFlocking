@@ -59,6 +59,11 @@ public interface DBConst {
     public interface CohortInfo {
         public static final String ID = "_id";
         public static final String NUM_USERS = "N";
+        public static final String FIRST_INBOX = "F";
+        public static final String LAST_INBOX = "L";
+        public static final String FIRST_SAFE_INBOX = "FS";
+        public static final String LAST_SAFE_INBOX = "LS";
+
 //        public static final String USER_LIST = "U";
     }
 
@@ -66,9 +71,8 @@ public interface DBConst {
         public static final String ID = "_id";
         public static final String GROUP_ID = "G";
         public static final String CREATE_TIME = "c";
-        public static final String COHORT_INFO = "CHI";
-        public static final String FIRST_INBOX = "F";
-        public static final String LAST_INBOX = "L";
+        public static final String COHORT_LIST = "CH";
+        public static final String DEFAULT_COHORT = "D";
     }
 
     public interface UserBlahStats {

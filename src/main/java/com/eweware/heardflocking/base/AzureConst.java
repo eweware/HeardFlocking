@@ -4,8 +4,12 @@ package com.eweware.heardflocking.base;
  * Created by weihan on 10/22/14.
  */
 public interface AzureConst {
-    static final String DEV_ACCOUNT_NAME = "weihanstorage";
-    static final String DEV_ACCOUNT_KEY = "PKz1eXkKlu07u4SpfyxfCvO1BH4yZCnuXhrQbebIaOdmUfGGD6qV8r+lycj7sNXSwtVTHpo/nJBlHVa4oavNgg==";
+//    static final String DEV_ACCOUNT_NAME = "weihanstorage";
+//    static final String DEV_ACCOUNT_KEY = "PKz1eXkKlu07u4SpfyxfCvO1BH4yZCnuXhrQbebIaOdmUfGGD6qV8r+lycj7sNXSwtVTHpo/nJBlHVa4oavNgg==";
+
+    public static final String DEV_ACCOUNT_NAME = "heardqueueqa";
+    public static final String DEV_ACCOUNT_KEY = "dr3XhxQEKlwqSGPe9+YJiwCUZ2v7izLOR31xED66joJcyUWJoDU9A1Hl0HzlXa/WsLorEYEpscNU06p0TYGcjA==";
+
 
     public static final String QA_ACCOUNT_NAME = "heardqueueqa";
     public static final String QA_ACCOUNT_KEY = "dr3XhxQEKlwqSGPe9+YJiwCUZ2v7izLOR31xED66joJcyUWJoDU9A1Hl0HzlXa/WsLorEYEpscNU06p0TYGcjA==";

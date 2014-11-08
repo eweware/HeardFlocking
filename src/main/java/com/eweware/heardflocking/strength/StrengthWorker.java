@@ -154,38 +154,41 @@ public class StrengthWorker {
     private HashMap<String, Double> computeBlahStrength(String blahId, String groupId, String generationId) throws TaskException {
         System.out.print(blahId + " ...");
 
-        // get cohort info for this generation
-        BasicDBObject cohortInboxInfo = getCohortInfo(generationId);
+        // get cohort list for this generation
+        List<ObjectId> cohortList = getCohortList(generationId);
 
         // build cohortId -> index map
         HashMap<String, Integer> cohortIdIndexMap = new HashMap<>();
         int c = 0;
-        for (String cohortId : cohortInboxInfo.keySet())
-            cohortIdIndexMap.put(cohortId, c++);
+        for (ObjectId cohortIdObj : cohortList)
+            cohortIdIndexMap.put(cohortIdObj.toString(), c++);
 
         // get user-blah util vector for this blah
-        AggregationOutput output = blahAggregation(blahId);
+        Cursor cursor = blahAggregation(blahId);
 
         // declare final cohort-strength result in vector form
         double[] cohortStrengthVec;
+        double defaultCohortStrength;
 
-        // if the blah doesn't have any activity
-        //   if this is for next generation, return cohort strength with all 0.0
-        //   else skip this task
-        Iterator<DBObject> it = output.results().iterator();
-        if (!it.hasNext()) {
+        // if the blah doesn't have any activity, strength is 0
+        if (!cursor.hasNext()) {
             cohortStrengthVec = new double[cohortIdIndexMap.size()];
+            defaultCohortStrength = 0;
         }
         else {
             // the aggregation is grouped by userId, for each user, compute utility and store
             // add userId and corresponding utility to two corresponding lists
             List<String> userIdList = new ArrayList<>();
             ArrayList<Double> userUtilList = new ArrayList<>();
-            for (DBObject userBlahAggregation : output.results()) {
-                UserBlahInfo userBlahInfo = new UserBlahInfo(userBlahAggregation, blahId);
+            while (cursor.hasNext()) {
+                BasicDBObject userBlah = (BasicDBObject) cursor.next();
+                UserBlahInfo userBlahInfo = new UserBlahInfo(userBlah, blahId);
                 userIdList.add(userBlahInfo.userId.toString());
                 userUtilList.add(computeUtility(userBlahInfo));
             }
+
+            // compute default cohort strength
+            defaultCohortStrength = computeDefaultCohortStrength(userUtilList);
 
             // get user cohort cluster info
             // matrix[userIndex][cohortIndex] = 1 when the user is in the cohort, = 0 otherwise
@@ -230,11 +233,15 @@ public class StrengthWorker {
             cohortStrength.put(cohortId, cohortStrengthVec[index]);
         }
 
+        // add default cohort strength
+        String defaultCohortId = getDefaultCohortId(generationId);
+        cohortStrength.put(defaultCohortId, defaultCohortStrength);
+
         System.out.print("done");
         return cohortStrength;
     }
 
-    private AggregationOutput blahAggregation(String blahId) {
+    private Cursor blahAggregation(String blahId) {
         // aggregate each user's activities for this blah
         BasicDBObject match = new BasicDBObject("$match", new BasicDBObject(DBConst.UserBlahStats.BLAH_ID, new ObjectId(blahId)));
 
@@ -246,7 +253,14 @@ public class StrengthWorker {
         BasicDBObject groupBy = new BasicDBObject("$group", groupFields);
 
         List<DBObject> pipeline = Arrays.asList(match, groupBy);
-        return db.getUserBlahStatsCol().aggregate(pipeline);
+
+        AggregationOptions aggregationOptions = AggregationOptions.builder()
+//                .batchSize(100)
+                .outputMode(AggregationOptions.OutputMode.CURSOR)
+                .allowDiskUse(true)
+                .build();
+
+        return db.getUserBlahStatsCol().aggregate(pipeline, aggregationOptions);
     }
 
     private class UserBlahInfo {
@@ -261,33 +275,25 @@ public class StrengthWorker {
         long commentUpvotes;
         long commentDownvotes;
 
-        private UserBlahInfo(DBObject userBlah, String blahId) {
+        private UserBlahInfo(BasicDBObject userBlah, String blahId) {
             userId = (ObjectId) userBlah.get("_id");
             this.blahId = new ObjectId(blahId);
 
-            Long obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.VIEWS);
-            views = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.OPENS);
-            opens = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENTS);
-            comments = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENT_UPVOTES);
-            upvotes = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.DOWNVOTES);
-            downvotes = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENT_UPVOTES);
-            commentUpvotes = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENT_DOWNVOTES);
-            commentDownvotes = obj == null ? 0 : obj;
+            views = userBlah.getLong(DBConst.UserBlahStats.VIEWS, 0L);
+            opens = userBlah.getLong(DBConst.UserBlahStats.OPENS, 0L);
+            comments = userBlah.getLong(DBConst.UserBlahStats.COMMENTS, 0L);
+            upvotes = userBlah.getLong(DBConst.UserBlahStats.UPVOTES, 0L);
+            downvotes = userBlah.getLong(DBConst.UserBlahStats.DOWNVOTES, 0L);
+            commentUpvotes = userBlah.getLong(DBConst.UserBlahStats.COMMENT_UPVOTES, 0L);
+            commentDownvotes = userBlah.getLong(DBConst.UserBlahStats.COMMENT_DOWNVOTES, 0L);
         }
     }
 
-    private BasicDBObject getCohortInfo(String generationId) throws TaskException {
+    private List<ObjectId> getCohortList(String generationId) throws TaskException {
         BasicDBObject query = new BasicDBObject(DBConst.GenerationInfo.ID, new ObjectId(generationId));
         BasicDBObject generationInfo = (BasicDBObject) db.getGenerationInfoCol().findOne(query);
         if (generationInfo == null) throw new TaskException("Error : generation info not found for ID : " + generationId, TaskExceptionType.SKIP);
-        return (BasicDBObject) generationInfo.get(DBConst.GenerationInfo.COHORT_INFO);
+        return (List<ObjectId>) generationInfo.get(DBConst.GenerationInfo.COHORT_LIST);
     }
 
     private double computeUtility(UserBlahInfo userBlahInfo) {
@@ -361,6 +367,22 @@ public class StrengthWorker {
         System.out.println("done");
     }
 
+    private String getDefaultCohortId(String generationId) throws TaskException {
+        BasicDBObject query = new BasicDBObject(DBConst.GenerationInfo.ID, new ObjectId(generationId));
+        BasicDBObject generationInfo = (BasicDBObject) db.getGenerationInfoCol().findOne(query);
+        if (generationInfo == null) throw new TaskException("Error : generation info not found for ID : " + generationId, TaskExceptionType.SKIP);
+        return generationInfo.getObjectId(DBConst.GenerationInfo.DEFAULT_COHORT).toString();
+    }
+
+    private double computeDefaultCohortStrength(List<Double> userUtilList) {
+        // take average
+        double sum = 0;
+        for (Double util : userUtilList) {
+            sum += util;
+        }
+        return sum / userUtilList.size();
+    }
+
     private HashMap<String, Double> computeUserStrength(String userId, String groupId, String generationId) {
         System.out.print(userId + " ...");
 
@@ -382,11 +404,11 @@ public class StrengthWorker {
         // get this generation's cohort list
         BasicDBObject query = new BasicDBObject(DBConst.GenerationInfo.ID, new ObjectId(generationId));
         BasicDBObject generation = (BasicDBObject) db.getGenerationInfoCol().findOne(query);
-        BasicDBObject cohortInfo = (BasicDBObject) generation.get(DBConst.GenerationInfo.COHORT_INFO);
+        List<ObjectId> cohortList = (List<ObjectId>) generation.get(DBConst.GenerationInfo.COHORT_LIST);
 
         List<String> cohortIdList = new ArrayList<>();
-        for (String cohortId : cohortInfo.keySet()) {
-            cohortIdList.add(cohortId);
+        for (ObjectId cohortIdObj : cohortList) {
+            cohortIdList.add(cohortIdObj.toString());
         }
 
         return cohortIdList;

@@ -253,18 +253,18 @@ public class CohortWorker{
         // but in that case we can not restrict blahs to only recently created ones
         for (String blahId : blahIdIndexMap.keySet()) {
             // aggregate every user's activity to this blah
-            AggregationOutput output = blahAggregation(blahId);
+            Cursor cursor = blahAggregation(blahId);
 
             // if the blah doesn't have any activity, skip
-            Iterator<DBObject> it = output.results().iterator();
-            if (it.hasNext()) {
+            if (cursor.hasNext()) {
                 activeBlahSet.add(blahId);
             }
             else continue;
 
             // the aggregation is grouped by userId, for each user, compute utility and store
-            for (DBObject userBlahAggregation : output.results()) {
-                UserBlahInfo userBlahInfo = new UserBlahInfo(userBlahAggregation, blahId);
+            while (cursor.hasNext()) {
+                BasicDBObject userBlah = (BasicDBObject) cursor.next();
+                UserBlahInfo userBlahInfo = new UserBlahInfo(userBlah, blahId);
 
                 // if this is a new user, count it
                 if (!activeUserSet.contains(userBlahInfo.userId)) {
@@ -287,7 +287,7 @@ public class CohortWorker{
         }
     }
 
-    private AggregationOutput blahAggregation(String blahId) {
+    private Cursor blahAggregation(String blahId) {
         // match blahId, group by userId, sum activities
         BasicDBObject match = new BasicDBObject("$match", new BasicDBObject(DBConst.UserBlahStats.BLAH_ID, new ObjectId(blahId)));
 
@@ -299,7 +299,14 @@ public class CohortWorker{
         BasicDBObject group = new BasicDBObject("$group", groupFields);
 
         List<DBObject> pipeline = Arrays.asList(match, group);
-        return db.getUserBlahStatsCol().aggregate(pipeline);
+
+        AggregationOptions aggregationOptions = AggregationOptions.builder()
+//                .batchSize(100)
+                .outputMode(AggregationOptions.OutputMode.CURSOR)
+                .allowDiskUse(true)
+                .build();
+
+        return db.getUserBlahStatsCol().aggregate(pipeline, aggregationOptions);
     }
 
     private class UserBlahInfo {
@@ -314,25 +321,17 @@ public class CohortWorker{
         long commentUpvotes;
         long commentDownvotes;
 
-        private UserBlahInfo(DBObject userBlah, String blahId) {
+        private UserBlahInfo(BasicDBObject userBlah, String blahId) {
             userId = (ObjectId) userBlah.get("_id");
             this.blahId = new ObjectId(blahId);
 
-            Long obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.VIEWS);
-            views = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.OPENS);
-            opens = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENTS);
-            comments = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.UPVOTES);
-            upvotes = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.DOWNVOTES);
-            downvotes = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENT_UPVOTES);
-            commentUpvotes = obj == null ? 0 : obj;
-            obj = (Long) userBlah.get(DBConst.UserBlahStats.COMMENT_DOWNVOTES);
-            commentDownvotes = obj == null ? 0 : obj;
+            views = userBlah.getLong(DBConst.UserBlahStats.VIEWS, 0L);
+            opens = userBlah.getLong(DBConst.UserBlahStats.OPENS, 0L);
+            comments = userBlah.getLong(DBConst.UserBlahStats.COMMENTS, 0L);
+            upvotes = userBlah.getLong(DBConst.UserBlahStats.UPVOTES, 0L);
+            downvotes = userBlah.getLong(DBConst.UserBlahStats.DOWNVOTES, 0L);
+            commentUpvotes = userBlah.getLong(DBConst.UserBlahStats.COMMENT_UPVOTES, 0L);
+            commentDownvotes = userBlah.getLong(DBConst.UserBlahStats.COMMENT_DOWNVOTES, 0L);
         }
     }
 
@@ -498,11 +497,14 @@ public class CohortWorker{
 
     private void updateMongoAndQueue() throws Exception {
 
+        // make a default cohort
+        ObjectId defaultCohortIdObj = new ObjectId();
+
         // insert cohort information into infodb.cohortInfo
-        insertCohortInfo();
+        insertAllCohortInfo(defaultCohortIdObj);
 
         // insert cohort generation info into infodb.generationInfo
-        String generationId = insertGenerationInfo();
+        String generationId = insertGenerationInfo(defaultCohortIdObj);
 
         // write user's cohort info into infodb.usreGroupInfo
         updateUserGroupInfo(generationId);
@@ -511,38 +513,48 @@ public class CohortWorker{
         produceStrengthTask(generationId);
     }
 
-    private void insertCohortInfo() {
+    private void insertAllCohortInfo(ObjectId defaultCohortIdObj) {
         System.out.print(servicePrefix + groupPrefix +" write new cohort information to database...");
 
         for (String cohortId : userPerCohort.keySet()) {
             List<String> userIdList = userPerCohort.get(cohortId);
-
-            BasicDBObject cohortInfo = new BasicDBObject();
-            cohortInfo.put(DBConst.CohortInfo.ID, new ObjectId(cohortId));
-            cohortInfo.put(DBConst.CohortInfo.NUM_USERS, (long)userIdList.size());
-            // we could add user list for each cohort, but it this necessary?
-//            cohortInfo.put(DBConstants.CohortInfo.USER_LIST, convertIdList(userIdList));
-
-            db.getCohortInfoCol().insert(cohortInfo);
+            insertCohortInfo(new ObjectId(cohortId), userIdList.size());
         }
+
+        // insert default cohort
+        insertCohortInfo(defaultCohortIdObj, -1L);
+
         System.out.println("done");
     }
 
-    private String insertGenerationInfo() {
-        System.out.print(servicePrefix + groupPrefix + " write new generation information to database...");
+    private void insertCohortInfo(ObjectId cohortIdObj, long userNum) {
+        BasicDBObject cohortInfo = new BasicDBObject();
+        cohortInfo.put(DBConst.CohortInfo.ID, cohortIdObj);
+        cohortInfo.put(DBConst.CohortInfo.NUM_USERS, userNum);
+//        cohortInfo.put(DBConst.CohortInfo.FIRST_INBOX, -1L);
+//        cohortInfo.put(DBConst.CohortInfo.LAST_INBOX, -1L);
+        // we could add user list for each cohort, but it this necessary?
+//            cohortInfo.put(DBConstants.CohortInfo.USER_LIST, convertIdList(userIdList));
+        db.getCohortInfoCol().insert(cohortInfo);
+    }
 
-        BasicDBObject cohortInfoDoc = new BasicDBObject();
-        for (String cohortId : cohortIndexIdMap) {
-            BasicDBObject defaultInbox = new BasicDBObject(DBConst.GenerationInfo.FIRST_INBOX, -1L);
-            defaultInbox.append(DBConst.GenerationInfo.LAST_INBOX, -1L);
-            cohortInfoDoc.put(cohortId, defaultInbox); // cohortId as keys
+    private String insertGenerationInfo(ObjectId defaultCohortIdObj) {
+        System.out.print(servicePrefix + groupPrefix + " write new generation information to database...");
+        // make cohort list, exclude the default cohort from this list
+        List<ObjectId> cohortList = new ArrayList<>();
+//        cohortList.add(defaultCohortIdObj);
+        for (String cohortId : userPerCohort.keySet()) {
+            cohortList.add(new ObjectId(cohortId));
         }
+        // make generation info document
         ObjectId generationIdObj = new ObjectId();
-        BasicDBObject generationDoc = new BasicDBObject(DBConst.GenerationInfo.ID, generationIdObj);
-        generationDoc.put(DBConst.GenerationInfo.CREATE_TIME, new Date());
-        generationDoc.put(DBConst.GenerationInfo.GROUP_ID, new ObjectId(groupId));
-        generationDoc.put(DBConst.GenerationInfo.COHORT_INFO, cohortInfoDoc);
-        db.getGenerationInfoCol().insert(generationDoc);
+        BasicDBObject generationInfo = new BasicDBObject(DBConst.GenerationInfo.ID, generationIdObj);
+        generationInfo.put(DBConst.GenerationInfo.CREATE_TIME, new Date());
+        generationInfo.put(DBConst.GenerationInfo.GROUP_ID, new ObjectId(groupId));
+        generationInfo.put(DBConst.GenerationInfo.COHORT_LIST, cohortList);
+        generationInfo.put(DBConst.GenerationInfo.DEFAULT_COHORT, defaultCohortIdObj);
+
+        db.getGenerationInfoCol().insert(generationInfo);
 
         System.out.println("done");
 
