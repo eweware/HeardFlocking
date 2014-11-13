@@ -24,12 +24,6 @@ public class InboxMonitor extends TimerTask {
         Timer timer = new Timer();
         Calendar cal = Calendar.getInstance();
 
-        // set time to run
-//        cal.set(Calendar.HOUR_OF_DAY, 0);
-        cal.set(Calendar.MINUTE, 0);
-        cal.set(Calendar.SECOND, 0);
-        cal.set(Calendar.MILLISECOND, 0);
-
         // set period
         int PERIOD_HOURS = ServiceProperties.InboxMonitor.PERIOD_HOURS;
 
@@ -96,6 +90,11 @@ public class InboxMonitor extends TimerTask {
 
             if (groupNeedNewInbox(group)) {
                 String generationId = getCurrentGeneration(groupId);
+                if (generationId == null) {
+                    System.out.println("no generation available, skipped");
+                    continue;
+                }
+                System.out.print("active, ");
                 produceInboxTask(groupId, generationId);
             }
             else {
@@ -111,9 +110,10 @@ public class InboxMonitor extends TimerTask {
     private String getCurrentGeneration(String groupId) {
         BasicDBObject query = new BasicDBObject(DBConst.Groups.ID, new ObjectId(groupId));
         BasicDBObject group = (BasicDBObject) db.getGroupsCol().findOne(query);
-        return group.getString(DBConst.Groups.CURRENT_GENERATION);
+        return group.getString(DBConst.Groups.CURRENT_GENERATION, null);
     }
 
+    // TODO
     private boolean groupNeedNewInbox(BasicDBObject group) {
         return true;
     }

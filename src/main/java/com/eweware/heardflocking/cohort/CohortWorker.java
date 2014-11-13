@@ -91,7 +91,7 @@ public class CohortWorker{
                     } catch (TaskException e) {
                         // there is something wrong about the task
                         if (e.type == TaskExceptionType.SKIP) {
-                            System.out.println(e.getMessage() + ", task skipped");
+                            System.out.println(servicePrefix + e.getMessage() + ", task skipped");
                             azure.getCohortTaskQueue().deleteMessage(message);
                         } else if (e.type == TaskExceptionType.RECOMPUTE) {
                             System.out.println(e.getMessage() + ", task put back to queue");
@@ -140,12 +140,12 @@ public class CohortWorker{
         groupPrefix = "[" + groupNames.get(groupId) + "] ";
 
         System.out.println();
-        System.out.println(servicePrefix + groupPrefix + " start clustering");
+        System.out.println(servicePrefix + groupPrefix + "start clustering");
 
         // count number of blahs in this group
         // assign a vector index for each blah
         countAndIndexBlah();
-        System.out.print(servicePrefix + groupPrefix + " #blah : " + blahIdIndexMap.size());
+        System.out.print(servicePrefix + groupPrefix + "#blah : " + blahIdIndexMap.size());
 
         // count number of users in this group
         // assign a index for each user
@@ -157,6 +157,10 @@ public class CohortWorker{
         System.out.print("\t#blah active : " + activeBlahSet.size());
         System.out.print("\t#user active : " + activeUserSet.size());
         System.out.println();
+
+        if (activeBlahSet.size() == 0 || activeUserSet.size() == 0) {
+            throw new TaskException(groupPrefix + "no active blah/user", TaskExceptionType.SKIP);
+        }
 
         // build id - index map for only active blah, we don't need inactive blah for clustering
         indexActiveBlah();
@@ -542,7 +546,6 @@ public class CohortWorker{
         System.out.print(servicePrefix + groupPrefix + " write new generation information to database...");
         // make cohort list, exclude the default cohort from this list
         List<ObjectId> cohortList = new ArrayList<>();
-//        cohortList.add(defaultCohortIdObj);
         for (String cohortId : userPerCohort.keySet()) {
             cohortList.add(new ObjectId(cohortId));
         }

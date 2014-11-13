@@ -30,9 +30,32 @@ public class ServiceProperties {
     }
 
     public static class StrengthMonitor {
-        public static int START_HOUR;
         public static int PERIOD_MINUTES;
         public static int RECENT_BLAH_MONTHS;
+
+        public static double BLAH_WEIGHT_VIEW;
+        public static double BLAH_WEIGHT_OPEN;
+        public static double BLAH_WEIGHT_COMMENT;
+        public static double BLAH_WEIGHT_UPVOTES;
+        public static double BLAH_WEIGHT_DOWNVOTES;
+        public static double BLAH_WEIGHT_COMMENT_UPVOTES;
+        public static double BLAH_WEIGHT_COMMENT_DOWNVOTES;
+
+        public static double DELAY_BLAH_CHECK_THRESHOLD;
+        public static int DELAY_BLAH_CHECK_HOURS;
+        public static double BLAH_ACTIVE_THRESHOLD;
+
+        public static double USER_WEIGHT_VIEW;
+        public static double USER_WEIGHT_OPEN;
+        public static double USER_WEIGHT_COMMENT;
+        public static double USER_WEIGHT_UPVOTES;
+        public static double USER_WEIGHT_DOWNVOTES;
+        public static double USER_WEIGHT_COMMENT_UPVOTES;
+        public static double USER_WEIGHT_COMMENT_DOWNVOTES;
+
+        public static double DELAY_USER_CHECK_THRESHOLD;
+        public static int DELAY_USER_CHECK_HOURS;
+        public static double USER_ACTIVE_THRESHOLD;
     }
 
     public static class StrengthWorker {
@@ -51,7 +74,7 @@ public class ServiceProperties {
     }
 
     public static class InboxMonitor {
-        public static int START_HOUR;
+//        public static int START_HOUR;
         public static int PERIOD_HOURS;
     }
 

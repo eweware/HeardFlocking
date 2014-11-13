@@ -22,6 +22,7 @@ public class CohortMonitor extends TimerTask {
     private String servicePrefix = "[CohortMonitor] ";
 
     public static void execute(HeardDB db, HeardAzure azure) {
+        // TODO distribute cohort task evenly in a day?
         Timer timer = new Timer();
         Calendar cal = Calendar.getInstance();
 
@@ -94,7 +95,7 @@ public class CohortMonitor extends TimerTask {
             System.out.print(servicePrefix + groupPrefix + " check need for re-clustering : ");
 
             if (groupNeedReclustering(group)) {
-                System.out.println("YES");
+                System.out.print("YES");
                 produceCohortTask(groupId);
             }
             else {
@@ -106,13 +107,13 @@ public class CohortMonitor extends TimerTask {
         System.out.println(servicePrefix + "group scanning finished\n");
     }
 
+    // TODO
     private boolean groupNeedReclustering(BasicDBObject group) {
         return true;
     }
 
     private void produceCohortTask(String groupId) throws StorageException {
-        String groupPrefix = "[" + groupNames.get(groupId) + "] ";
-        System.out.print(servicePrefix + groupPrefix + "produce cohort task... ");
+        System.out.print(" produce cohort task... ");
 
         // produce inbox generation task
         BasicDBObject task = new BasicDBObject();

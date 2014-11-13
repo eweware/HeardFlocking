@@ -102,7 +102,7 @@ public class TransferInfoData {
                 // write into statsdb with fake date year=0 month=0 day=0
                 writeUserBlahInfoToStats(userBlahInfo);
                 if (i % 100 == 0)
-                    System.out.printf("%s%s %-9d   userdb.userBlahInfo -> infodb.userBlahInfo\n", servicePrefix, groupPrefix, i);
+                    System.out.printf("%s%s %-9d   userdb.userBlahInfo -> statsdb.userBlahStats\n", servicePrefix, groupPrefix, i);
                 i++;
             }
             cursor.close();

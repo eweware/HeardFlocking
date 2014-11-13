@@ -11,7 +11,6 @@ import com.mongodb.*;
 import com.mongodb.util.JSON;
 import org.bson.types.ObjectId;
 
-import java.net.UnknownHostException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
@@ -26,14 +25,9 @@ public class StrengthMonitor extends TimerTask {
     private String servicePrefix = "[StrengthMonitor] ";
 
     public static void execute(HeardDB db, HeardAzure azure) {
+        // TODO distribute group scanning evenly in a period of time?
         Timer timer = new Timer();
         Calendar cal = Calendar.getInstance();
-
-        // set time to run
-//        cal.set(Calendar.HOUR_OF_DAY, ServiceProperties.StrengthMonitor.START_HOUR);
-//        cal.set(Calendar.MINUTE, 0);
-//        cal.set(Calendar.SECOND, 0);
-//        cal.set(Calendar.MILLISECOND, 0);
 
         // set period
         System.out.println("[StrengthMonitor] start running, period=" + PERIOD_MINUTES + " (minutes), time : "  + new Date());
@@ -59,6 +53,32 @@ public class StrengthMonitor extends TimerTask {
 
     private static final int PERIOD_MINUTES = ServiceProperties.StrengthMonitor.PERIOD_MINUTES;
     private final int RECENT_BLAH_MONTHS = ServiceProperties.StrengthMonitor.RECENT_BLAH_MONTHS;
+
+    // weights for check whether blah is active
+    private final double bwV = ServiceProperties.StrengthMonitor.BLAH_WEIGHT_VIEW;
+    private final double bwO = ServiceProperties.StrengthMonitor.BLAH_WEIGHT_OPEN;
+    private final double bwC = ServiceProperties.StrengthMonitor.BLAH_WEIGHT_COMMENT;
+    private final double bwP = ServiceProperties.StrengthMonitor.BLAH_WEIGHT_UPVOTES;
+    private final double bwN = ServiceProperties.StrengthMonitor.BLAH_WEIGHT_DOWNVOTES;
+    private final double bwCP = ServiceProperties.StrengthMonitor.BLAH_WEIGHT_COMMENT_UPVOTES;
+    private final double bwCN = ServiceProperties.StrengthMonitor.BLAH_WEIGHT_COMMENT_DOWNVOTES;
+
+    private final double delayBlahCheckThreshold = ServiceProperties.StrengthMonitor.DELAY_BLAH_CHECK_THRESHOLD;
+    private final int delayBlahCheckHours = ServiceProperties.StrengthMonitor.DELAY_BLAH_CHECK_HOURS;
+    private final double blahActiveThreshold = ServiceProperties.StrengthMonitor.BLAH_ACTIVE_THRESHOLD;
+
+    // weights for check whether user is active
+    private final double uwV = ServiceProperties.StrengthMonitor.USER_WEIGHT_VIEW;
+    private final double uwO = ServiceProperties.StrengthMonitor.USER_WEIGHT_OPEN;
+    private final double uwC = ServiceProperties.StrengthMonitor.USER_WEIGHT_COMMENT;
+    private final double uwP = ServiceProperties.StrengthMonitor.USER_WEIGHT_UPVOTES;
+    private final double uwN = ServiceProperties.StrengthMonitor.USER_WEIGHT_DOWNVOTES;
+    private final double uwCP = ServiceProperties.StrengthMonitor.USER_WEIGHT_COMMENT_UPVOTES;
+    private final double uwCN = ServiceProperties.StrengthMonitor.USER_WEIGHT_COMMENT_DOWNVOTES;
+
+    private final double delayUserCheckThreshold = ServiceProperties.StrengthMonitor.DELAY_USER_CHECK_THRESHOLD;
+    private final int delayUserCheckHours = ServiceProperties.StrengthMonitor.DELAY_USER_CHECK_HOURS;
+    private final double userActiveThreshold = ServiceProperties.StrengthMonitor.USER_ACTIVE_THRESHOLD;
 
     private final boolean TEST_ONLY_TECH = ServiceProperties.TEST_ONLY_TECH;
 
@@ -89,7 +109,7 @@ public class StrengthMonitor extends TimerTask {
     private String getCurrentGeneration(String groupId) {
         BasicDBObject query = new BasicDBObject(DBConst.Groups.ID, new ObjectId(groupId));
         BasicDBObject group = (BasicDBObject) db.getGroupsCol().findOne(query);
-        return group.getString(DBConst.Groups.CURRENT_GENERATION);
+        return group.getString(DBConst.Groups.CURRENT_GENERATION, null);
     }
 
     private void scanBlahs() throws StorageException {
@@ -107,6 +127,12 @@ public class StrengthMonitor extends TimerTask {
             String groupPrefix = "[" + groupNames.get(groupId) + "] ";
 
             String generationId = getCurrentGeneration(groupId);
+
+            // if no generation available, skip scan
+            if (generationId == null) {
+                System.out.println(servicePrefix + groupPrefix + "no available generation, blah scan is skipped");
+                return;
+            }
 
             DBCursor cursor = getBlahs(groupId, earliestRelevantDate);
 
@@ -169,30 +195,23 @@ public class StrengthMonitor extends TimerTask {
 
             String generationId = getCurrentGeneration(groupId);
 
+            // if no generation available, skip scan
+            if (generationId == null) {
+                System.out.println(servicePrefix + groupPrefix + "no available generation, user scan is skipped");
+                continue;
+            }
+
             DBCursor cursor = getUsers(groupId);
 
             while (cursor.hasNext()) {
                 BasicDBObject userGroupInfo = (BasicDBObject) cursor.next();
                 String userId = userGroupInfo.get(DBConst.UserGroupInfo.USER_ID).toString();
-                String gid = userGroupInfo.get(DBConst.UserGroupInfo.GROUP_ID).toString();
 
-                // TODO check group name is consistent, then stop printing group name twice
                 System.out.print(servicePrefix + groupPrefix + "[user] " + userId + "... ");
 
                 if (userIsActive(userGroupInfo)) {
                     System.out.print("active, producing task... ");
-
-                    // produce re-compute strength task
-                    BasicDBObject task = new BasicDBObject();
-                    task.put(AzureConst.StrengthTask.TYPE, AzureConst.StrengthTask.COMPUTE_USER_STRENGTH);
-                    task.put(AzureConst.StrengthTask.USER_ID, userId);
-                    task.put(AzureConst.StrengthTask.GROUP_ID, groupId);
-                    task.put(AzureConst.StrengthTask.GENERATION_ID, generationId);
-
-                    // enqueue
-                    CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
-                    azure.getStrengthTaskQueue().addMessage(message);
-                    System.out.println("done");
+                    produceUserStrengthTask(groupId, userId, generationId);
                 } else {
                     System.out.println("inactive, passed");
                 }
@@ -214,16 +233,30 @@ public class StrengthMonitor extends TimerTask {
         return db.getUserGroupInfoCol().find(query);
     }
 
+    private void produceUserStrengthTask(String groupId, String userId, String generationId) throws StorageException {
+        // produce re-compute strength task
+        BasicDBObject task = new BasicDBObject();
+        task.put(AzureConst.StrengthTask.TYPE, AzureConst.StrengthTask.COMPUTE_USER_STRENGTH);
+        task.put(AzureConst.StrengthTask.USER_ID, userId);
+        task.put(AzureConst.StrengthTask.GROUP_ID, groupId);
+        task.put(AzureConst.StrengthTask.GENERATION_ID, generationId);
+
+        // enqueue
+        CloudQueueMessage message = new CloudQueueMessage(JSON.serialize(task));
+        azure.getStrengthTaskQueue().addMessage(message);
+        System.out.println("done");
+    }
+
     private boolean blahIsActive(BasicDBObject blahInfo) {
         // get activity stats
         RecentBlahActivity stats = new RecentBlahActivity(blahInfo);
 
-        // determine next check time based on activity and last update time
-        updateBlahNextCheckTime(stats);
+        double score = computeBlahActivityScore(stats);
 
-        long score = stats.opens + stats.comments * 5 + stats.upvotes * 10
-                + stats.downvotes * 10 + stats.commentUpvotes * 5 + stats.commentDownvotes * 5;
-        if (score >= 20) {
+        // determine next check time based on activity and last update time
+        updateBlahNextCheckTime(stats, score);
+
+        if (score >= blahActiveThreshold) {
             // re-compute strength
             // remove new activity from infodb.blahInfo collection
             removeRecentBlahActivity(stats);
@@ -238,12 +271,12 @@ public class StrengthMonitor extends TimerTask {
         // get activity stats
         RecentUserActivity stats = new RecentUserActivity(userGroupInfo);
 
-        // determine next check time based on activity and last update time
-        updateUserNextCheckTime(stats);
+        double score = computeUserActivityScore(stats);
 
-        long score = stats.opens + stats.comments * 5 + stats.upvotes * 10
-                + stats.downvotes * 10 + stats.commentUpvotes * 5 + stats.commentDownvotes * 5;
-        if (score >= 20) {
+        // determine next check time based on activity and last update time
+        updateUserNextCheckTime(stats, score);
+
+        if (score >= userActiveThreshold) {
             // re-compute strength
             // remove new activity from infodb.userGroupInfo collection
             removeRecentUserActivity(stats);
@@ -252,6 +285,28 @@ public class StrengthMonitor extends TimerTask {
         else {
             return false;
         }
+    }
+
+    private double computeBlahActivityScore(RecentBlahActivity stats) {
+        double score = stats.views * bwV
+                + stats.opens * bwO
+                + stats.comments * bwC
+                + stats.upvotes * bwP
+                + stats.downvotes * bwN
+                + stats.commentUpvotes * bwCP
+                + stats.commentDownvotes * bwCN;
+        return score;
+    }
+
+    private double computeUserActivityScore(RecentUserActivity stats) {
+        double score = stats.views * uwV
+                + stats.opens * uwO
+                + stats.comments * uwC
+                + stats.upvotes * uwP
+                + stats.downvotes * uwN
+                + stats.commentUpvotes * uwCP
+                + stats.commentDownvotes * uwCN;
+        return score;
     }
 
     private class RecentBlahActivity {
@@ -314,18 +369,18 @@ public class StrengthMonitor extends TimerTask {
         }
     }
 
-    private void updateBlahNextCheckTime(RecentBlahActivity stats) {
+    private void updateBlahNextCheckTime(RecentBlahActivity stats, double score) {
 
         // hopefully in the future MongoDB can support java.time objects
         LocalDateTime lastUpdate = LocalDateTime.ofInstant(stats.lastUpdate.toInstant(), ZoneId.systemDefault());
         long hoursPassedSinceUpdate = ChronoUnit.HOURS.between(lastUpdate, LocalDateTime.now());
-        double openPerHour = stats.opens / (double)hoursPassedSinceUpdate;
+        double scorePerHour = score / (double)hoursPassedSinceUpdate;
 
         // if get less than 1 open per hour on average, check again in 3 days
         // otherwise set to now, so it will be checked in next scan (no matter how frequently the scan is)
         LocalDateTime nextCheckTime;
-        if (openPerHour < 0) {
-            nextCheckTime = LocalDateTime.now().plusDays(3);
+        if (scorePerHour < delayBlahCheckThreshold) {
+            nextCheckTime = LocalDateTime.now().plusHours(delayBlahCheckHours);
         }
         else {
             nextCheckTime = LocalDateTime.now();
@@ -339,17 +394,17 @@ public class StrengthMonitor extends TimerTask {
         db.getBlahInfoCol().update(query, setter);
     }
 
-    private void updateUserNextCheckTime(RecentUserActivity stats) {
+    private void updateUserNextCheckTime(RecentUserActivity stats, double score) {
         // hopefully in the future MongoDB can support java.time objects
         LocalDateTime lastUpdate = LocalDateTime.ofInstant(stats.lastUpdate.toInstant(), ZoneId.systemDefault());
         long hoursPassedSinceUpdate = ChronoUnit.HOURS.between(lastUpdate, LocalDateTime.now());
-        double openPerHour = stats.opens / (double)hoursPassedSinceUpdate;
+        double openPerHour = score / (double)hoursPassedSinceUpdate;
 
         // if get less than 1 open per hour on average, check again in 3 days
         // otherwise set to now, so it will be checked in next scan (no matter how frequently the scan is)
         LocalDateTime nextCheckTime;
-        if (openPerHour < 0) {
-            nextCheckTime = LocalDateTime.now().plusDays(3);
+        if (openPerHour < delayUserCheckThreshold) {
+            nextCheckTime = LocalDateTime.now().plusHours(delayUserCheckHours);
         }
         else {
             nextCheckTime = LocalDateTime.now();

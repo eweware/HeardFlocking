@@ -144,7 +144,7 @@ public class Main {
     }
 
     private void getPropCohortMonitor(Properties prop) {
-        ServiceProperties.CohortMonitor.START_HOUR = Integer.parseInt(prop.getProperty("cm.start_hour", "0"));
+        ServiceProperties.CohortMonitor.START_HOUR = Integer.parseInt(prop.getProperty("cm.start_hour", "4"));
         ServiceProperties.CohortMonitor.PERIOD_HOURS = Integer.parseInt(prop.getProperty("cm.period_hours", "24"));
     }
 
@@ -164,9 +164,32 @@ public class Main {
     }
 
     private void getPropStrengthMonitor(Properties prop) {
-        ServiceProperties.StrengthMonitor.START_HOUR = Integer.parseInt(prop.getProperty("sm.start_hour", "0"));
         ServiceProperties.StrengthMonitor.PERIOD_MINUTES = Integer.parseInt(prop.getProperty("sm.period_minutes", "30"));
         ServiceProperties.StrengthMonitor.RECENT_BLAH_MONTHS = Integer.parseInt(prop.getProperty("sm.recent_blah_months", "24"));
+
+        ServiceProperties.StrengthMonitor.BLAH_WEIGHT_VIEW = Double.parseDouble(prop.getProperty("sm.blah_weight_view", "1.0"));
+        ServiceProperties.StrengthMonitor.BLAH_WEIGHT_OPEN = Double.parseDouble(prop.getProperty("sm.blah_weight_open", "2.0"));
+        ServiceProperties.StrengthMonitor.BLAH_WEIGHT_COMMENT = Double.parseDouble(prop.getProperty("sm.blah_weight_comment", "5.0"));
+        ServiceProperties.StrengthMonitor.BLAH_WEIGHT_UPVOTES = Double.parseDouble(prop.getProperty("sm.blah_weight_upvotes", "10.0"));
+        ServiceProperties.StrengthMonitor.BLAH_WEIGHT_DOWNVOTES = Double.parseDouble(prop.getProperty("sm.blah_weight_downvotes", "10.0"));
+        ServiceProperties.StrengthMonitor.BLAH_WEIGHT_COMMENT_UPVOTES = Double.parseDouble(prop.getProperty("sm.blah_weight_comment_upvotes", "5.0"));
+        ServiceProperties.StrengthMonitor.BLAH_WEIGHT_COMMENT_DOWNVOTES = Double.parseDouble(prop.getProperty("sm.blah_weight_comment_downvotes", "5.0"));
+
+        ServiceProperties.StrengthMonitor.DELAY_BLAH_CHECK_THRESHOLD = Double.parseDouble(prop.getProperty("sm.delay_blah_check_threshold", "1"));
+        ServiceProperties.StrengthMonitor.DELAY_BLAH_CHECK_HOURS = Integer.parseInt(prop.getProperty("sm.delay_blah_check_hours", "24"));
+        ServiceProperties.StrengthMonitor.BLAH_ACTIVE_THRESHOLD = Double.parseDouble(prop.getProperty("sm.blah_active_threshold", "20"));
+
+        ServiceProperties.StrengthMonitor.USER_WEIGHT_VIEW = Double.parseDouble(prop.getProperty("sm.user_weight_view", "1.0"));
+        ServiceProperties.StrengthMonitor.USER_WEIGHT_OPEN = Double.parseDouble(prop.getProperty("sm.user_weight_open", "2.0"));
+        ServiceProperties.StrengthMonitor.USER_WEIGHT_COMMENT = Double.parseDouble(prop.getProperty("sm.user_weight_comment", "5.0"));
+        ServiceProperties.StrengthMonitor.USER_WEIGHT_UPVOTES = Double.parseDouble(prop.getProperty("sm.user_weight_upvotes", "10.0"));
+        ServiceProperties.StrengthMonitor.USER_WEIGHT_DOWNVOTES = Double.parseDouble(prop.getProperty("sm.user_weight_downvotes", "10.0"));
+        ServiceProperties.StrengthMonitor.USER_WEIGHT_COMMENT_UPVOTES = Double.parseDouble(prop.getProperty("sm.user_weight_comment_upvotes", "5.0"));
+        ServiceProperties.StrengthMonitor.USER_WEIGHT_COMMENT_DOWNVOTES = Double.parseDouble(prop.getProperty("sm.user_weight_comment_downvotes", "5.0"));
+
+        ServiceProperties.StrengthMonitor.DELAY_USER_CHECK_THRESHOLD = Double.parseDouble(prop.getProperty("sm.delay_user_check_threshold", "1"));
+        ServiceProperties.StrengthMonitor.DELAY_USER_CHECK_HOURS = Integer.parseInt(prop.getProperty("sm.delay_user_check_hours", "24"));
+        ServiceProperties.StrengthMonitor.USER_ACTIVE_THRESHOLD = Double.parseDouble(prop.getProperty("sm.user_active_threshold", "20"));
     }
 
     private void getPropStrengthWorker(Properties prop) {
