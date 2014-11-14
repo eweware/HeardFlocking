@@ -92,4 +92,9 @@ public class ServiceProperties {
         public static double BLAH_NEW_ACT_PROBABILITY;
         public static double User_NEW_ACT_PROBABILITY;
     }
+
+    public static class DataCleaner {
+        public static int PERIOD_HOURS;
+        public static int RECENT_GENERATIONS_KEPT;
+    }
 }

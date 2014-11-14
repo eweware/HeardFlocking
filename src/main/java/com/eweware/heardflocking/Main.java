@@ -7,6 +7,7 @@ import com.eweware.heardflocking.cohort.CohortWorker;
 import com.eweware.heardflocking.inbox.InboxMonitor;
 import com.eweware.heardflocking.strength.StrengthMonitor;
 import com.eweware.heardflocking.strength.StrengthWorker;
+import com.eweware.heardflocking.util.DataCleaner;
 import com.eweware.heardflocking.util.RandomNewActivity;
 import com.eweware.heardflocking.util.TransferInfoData;
 
@@ -57,6 +58,7 @@ public class Main {
 
         getPropTransferInfoDate(prop);
         getPropRandomNewActivity(prop);
+        getPropDataCleaner(prop);
 
         getPropCohortMonitor(prop);
         getPropCohortWorker(prop);
@@ -75,6 +77,7 @@ public class Main {
             System.out.println("\tim: InboxMonitor");
             System.out.println("\ttd: TransferInfoData");
             System.out.println("\tra: RandomeNewActivity");
+            System.out.println("\tdc: DataCleaner");
             System.out.println();
             return null;
         }
@@ -121,8 +124,11 @@ public class Main {
         else if (service.equals("ra")) {
             new RandomNewActivity(db).execute();
         }
+        else if (service.equals("dc")) {
+            DataCleaner.execute(db, azure);
+        }
         else {
-            throw new IllegalArgumentException("Argument error : service can only be [cw|sm|sw|im|td|ra]");
+            throw new IllegalArgumentException("Argument error : service can only be [cw|sm|sw|im|td|ra|dc]");
         }
     }
 
@@ -141,6 +147,11 @@ public class Main {
         ServiceProperties.RandomNewActivity.USER_WAIT_MILLIS = Long.parseLong(prop.getProperty("ra.user_wait_millis", "1000"));
         ServiceProperties.RandomNewActivity.BLAH_NEW_ACT_PROBABILITY = Double.parseDouble(prop.getProperty("ra.blah_new_act_probability", "0.01"));
         ServiceProperties.RandomNewActivity.User_NEW_ACT_PROBABILITY = Double.parseDouble(prop.getProperty("ra.user_new_act_probability", "0.01"));
+    }
+
+    private void getPropDataCleaner(Properties prop) {
+        ServiceProperties.DataCleaner.PERIOD_HOURS = Integer.parseInt(prop.getProperty("dc.period_hours", "24"));
+        ServiceProperties.DataCleaner.RECENT_GENERATIONS_KEPT = Integer.parseInt(prop.getProperty("dc.recent_generations_kept", "3"));
     }
 
     private void getPropCohortMonitor(Properties prop) {

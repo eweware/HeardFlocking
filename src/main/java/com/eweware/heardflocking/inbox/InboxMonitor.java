@@ -86,7 +86,7 @@ public class InboxMonitor extends TimerTask {
 
             if (TEST_ONLY_TECH && !groupId.equals("522ccb78e4b0a35dadfcf73f")) continue;
 
-            System.out.print(servicePrefix + "check group " + groupNames.get(groupId) + "' ... ");
+            System.out.print(servicePrefix + "check group '" + groupNames.get(groupId) + "' ... ");
 
             if (groupNeedNewInbox(group)) {
                 String generationId = getCurrentGeneration(groupId);
@@ -132,6 +132,7 @@ public class InboxMonitor extends TimerTask {
         azure.getInboxTaskQueue().addMessage(message);
         System.out.println("done");
     }
+
     private void printFinishInfo() {
         Calendar nextTime = Calendar.getInstance();
         nextTime.setTime(startTime);

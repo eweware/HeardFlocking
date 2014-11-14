@@ -34,6 +34,7 @@ public class HeardDB {
     private DB blahDB;
     private DB infoDB;
     private DB statsDB;
+    private DB inboxDB;
 
     private DBCollection groupsCol;
     private DBCollection userGroupCol;
@@ -58,6 +59,7 @@ public class HeardDB {
         blahDB = mongoClient.getDB("blahdb");
         infoDB = mongoClient.getDB("infodb");
         statsDB = mongoClient.getDB("statsdb");
+        inboxDB = mongoClient.getDB("inboxdb");
 
         groupsCol = userDB.getCollection("groups");
         userGroupCol = userDB.getCollection("usergroups");
@@ -75,9 +77,11 @@ public class HeardDB {
         System.out.println("done");
     }
 
-    public DBCollection getGroupsCol() {
-        return groupsCol;
+    public DBCollection getInboxCollection(String name) {
+        return inboxDB.getCollection(name);
     }
+
+    public DBCollection getGroupsCol() { return groupsCol; }
 
     public DBCollection getUserGroupCol() {
         return userGroupCol;
